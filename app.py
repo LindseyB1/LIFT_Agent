@@ -1,15 +1,10 @@
 import json
+import math
 import os
 from datetime import datetime
-from pathlib import Path
 
+import pandas as pd
 import streamlit as st
-
-from auth import render_auth_gate
-from monitoring import compare_text_changes, save_monitoring_result
-from p3_tools import analyze_project_request
-from security_utils import validate_user_input
-from ui_components import render_header, render_safety_notice, render_welcome_panel
 
 try:
     from openai import OpenAI
@@ -22,81 +17,58 @@ except Exception as error:
     OPENAI_IMPORT_ERROR = str(error)
 
 
-APP_NAME = "Project 3 Final AI Agent"
-APP_SUBTITLE = "A final AI application shell built from Project 1 and Project 2 lessons."
-
-OUTPUTS_DIR = Path("Outputs")
-TESTS_DIR = Path("Tests")
-MONITORING_DIR = Path("Monitoring")
+APP_NAME = "LIFT Agent"
+APP_TAGLINE = "Locate. Identify. Follow-up. Track."
+APP_SUBTITLE = "AI-assisted resource matching, gap review, outreach drafting, and follow-up tracking."
 
 DEFAULT_MODEL = os.getenv("P3_DEFAULT_MODEL", "gpt-4o-mini")
-FAST_MODEL = os.getenv("P3_FAST_MODEL", "gpt-4o-mini")
-DEEP_MODEL = os.getenv("P3_DEEP_MODEL", "gpt-4o")
-SOURCE_COMPARISON_MODEL = os.getenv("P3_SOURCE_COMPARISON_MODEL", "gpt-4o")
-MONITORING_MODEL = os.getenv("P3_MONITORING_MODEL", "gpt-4o-mini")
-EXECUTIVE_MODEL = os.getenv("P3_EXECUTIVE_MODEL", "gpt-4o-mini")
-FALLBACK_MODEL = os.getenv("P3_FALLBACK_MODEL", "gpt-4o-mini")
 
 
-ROUTE_MODEL_MAP = {
-    "fast_summary": FAST_MODEL,
-    "deep_analysis": DEEP_MODEL,
-    "source_comparison": SOURCE_COMPARISON_MODEL,
-    "monitoring_update": MONITORING_MODEL,
-    "executive_brief": EXECUTIVE_MODEL,
-    "fallback_review": FALLBACK_MODEL,
-}
+ROUTES = [
+    "resource_match",
+    "location_radius_match",
+    "gap_analysis",
+    "validation_review",
+    "outreach_email",
+    "tracker_generation",
+    "system_gap_brief",
+    "fallback_review",
+]
 
 
-ANALYZE_PROJECT_REQUEST_TOOL = {
+ANALYZE_RESOURCE_GAP_TOOL = {
     "type": "function",
     "function": {
-        "name": "analyze_project_request",
+        "name": "analyze_resource_gaps_and_build_contingency_plan",
         "description": (
-            "Analyze the user's Project 3 request before final output. Identify likely need, "
-            "complexity, keywords, information gaps, recommended output elements, and limits."
+            "Analyze a user's resource need, location/radius, eligibility context, and synthetic resource data. "
+            "Return matched resources, access gaps, eligibility barriers, contingency options, outreach draft, "
+            "tracker rows, and system gap notes."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "user_request": {
-                    "type": "string",
-                    "description": "The user's public or synthetic request text.",
-                },
-                "output_style": {
-                    "type": "string",
-                    "description": "The output style selected by the user.",
-                },
-                "project_goal": {
-                    "type": "string",
-                    "description": "The purpose or goal of the Project 3 app.",
-                },
+                "user_need": {"type": "string"},
+                "resource_category": {"type": "string"},
+                "primary_location": {"type": "string"},
+                "additional_locations": {"type": "array", "items": {"type": "string"}},
+                "radius_miles": {"type": "number"},
+                "context": {"type": "object"},
+                "selected_outputs": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["user_request", "output_style", "project_goal"],
+            "required": [
+                "user_need",
+                "resource_category",
+                "primary_location",
+                "additional_locations",
+                "radius_miles",
+                "context",
+                "selected_outputs",
+            ],
             "additionalProperties": False,
         },
     },
 }
-
-
-def initialize_session_state():
-    defaults = {
-        "latest_output": "",
-        "latest_metadata": {},
-        "latest_route_trace": {},
-        "latest_tool_trace": {},
-        "latest_eval_saved": False,
-    }
-
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-
-def ensure_project_folders():
-    OUTPUTS_DIR.mkdir(exist_ok=True)
-    TESTS_DIR.mkdir(exist_ok=True)
-    MONITORING_DIR.mkdir(exist_ok=True)
 
 
 def get_openai_api_key():
@@ -111,29 +83,22 @@ def get_openai_api_key():
 
 
 def get_openai_client():
-    if not OPENAI_AVAILABLE:
-        raise RuntimeError(
-            f"The openai package is not available. Install it with: pip install openai. Details: {OPENAI_IMPORT_ERROR}"
-        )
-
     api_key = get_openai_api_key()
 
+    if not OPENAI_AVAILABLE:
+        raise RuntimeError(f"OpenAI package is not available: {OPENAI_IMPORT_ERROR}")
+
     if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is missing. Add it to Streamlit secrets or set it as a local environment variable."
-        )
+        raise RuntimeError("OPENAI_API_KEY is missing.")
 
     return OpenAI(api_key=api_key)
 
 
 def parse_json_safely(text):
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
+    if not text:
+        return {}
 
-    # Handles occasional fenced JSON from the model.
-    cleaned = str(text or "").strip()
+    cleaned = str(text).strip()
     cleaned = cleaned.replace("```json", "").replace("```", "").strip()
 
     try:
@@ -142,140 +107,632 @@ def parse_json_safely(text):
         return {}
 
 
-def llm_select_route(client, user_request, output_style, project_goal):
+def synthetic_resource_data():
     """
-    Real LLM routing step.
-
-    This is intentionally separate from the final report call so Project 3 can document:
-    - what route the LLM chose,
-    - why it chose it,
-    - which model the app dispatched to next.
+    Synthetic/public-style resource data for the Project 3 draft.
+    This is intentionally not a real operational directory.
     """
-    route_prompt = f"""
-You are the Project 3 routing assistant.
 
-Choose one route for the user's request:
+    rows = [
+        {
+            "resource_name": "Kent County Community Food Pantry",
+            "category": "Food / Basic Needs",
+            "city": "Grand Rapids",
+            "state": "MI",
+            "lat": 42.9634,
+            "lon": -85.6681,
+            "area_served": "Kent County",
+            "available_24_7": "No",
+            "business_hours": "Mon-Fri 9 AM-4 PM",
+            "phone": "616-555-0101",
+            "group_email": "intake@example.org",
+            "website": "https://example.org/food",
+            "eligibility": "Kent County residents; photo ID preferred",
+            "transportation_required": "Yes",
+            "remote_option": "No",
+            "last_verified_date": "2026-06-01",
+            "verification_method": "Synthetic record",
+            "status": "Needs verification",
+            "notes": "Business hours only; may be hard for third-shift users.",
+        },
+        {
+            "resource_name": "Michigan 211 Navigation Line",
+            "category": "General Support / 24-7 Navigation",
+            "city": "Statewide",
+            "state": "MI",
+            "lat": 42.7335,
+            "lon": -84.5555,
+            "area_served": "Michigan",
+            "available_24_7": "Yes",
+            "business_hours": "24/7",
+            "phone": "211",
+            "group_email": "info@example211.org",
+            "website": "https://mi211.org",
+            "eligibility": "Open to public; resources may vary by ZIP code",
+            "transportation_required": "No",
+            "remote_option": "Yes",
+            "last_verified_date": "2026-06-01",
+            "verification_method": "Synthetic/public-style record",
+            "status": "Usable starting point",
+            "notes": "Good fallback when local resource fit is unclear.",
+        },
+        {
+            "resource_name": "Veteran Emergency Assistance Office",
+            "category": "Veteran / Service Member Support",
+            "city": "Grand Rapids",
+            "state": "MI",
+            "lat": 42.9876,
+            "lon": -85.7053,
+            "area_served": "West Michigan",
+            "available_24_7": "No",
+            "business_hours": "Mon-Thu 8 AM-5 PM",
+            "phone": "616-555-0202",
+            "group_email": "veterans@example.org",
+            "website": "https://example.org/veterans",
+            "eligibility": "Veteran/service member status; proof of service may be requested",
+            "transportation_required": "Sometimes",
+            "remote_option": "Partial",
+            "last_verified_date": "2026-05-20",
+            "verification_method": "Synthetic record",
+            "status": "Needs verification",
+            "notes": "Potential DD214/proof-of-service barrier.",
+        },
+        {
+            "resource_name": "After-Hours Crisis Support Line",
+            "category": "Emergency / 24-7 Crisis",
+            "city": "Statewide",
+            "state": "MI",
+            "lat": 42.3314,
+            "lon": -83.0458,
+            "area_served": "Michigan",
+            "available_24_7": "Yes",
+            "business_hours": "24/7",
+            "phone": "988",
+            "group_email": "crisis@example.org",
+            "website": "https://example.org/crisis",
+            "eligibility": "Open to public",
+            "transportation_required": "No",
+            "remote_option": "Yes",
+            "last_verified_date": "2026-06-01",
+            "verification_method": "Synthetic record",
+            "status": "Usable starting point",
+            "notes": "Emergency/crisis support; not a food/housing replacement.",
+        },
+        {
+            "resource_name": "Housing Stabilization Intake",
+            "category": "Housing / Utilities",
+            "city": "Wyoming",
+            "state": "MI",
+            "lat": 42.9134,
+            "lon": -85.7053,
+            "area_served": "Kent County",
+            "available_24_7": "No",
+            "business_hours": "Mon-Fri 8:30 AM-4:30 PM",
+            "phone": "616-555-0303",
+            "group_email": "housing@example.org",
+            "website": "https://example.org/housing",
+            "eligibility": "Income and county eligibility may apply",
+            "transportation_required": "Sometimes",
+            "remote_option": "Partial",
+            "last_verified_date": "2026-05-15",
+            "verification_method": "Synthetic record",
+            "status": "Needs verification",
+            "notes": "Eligibility and documentation may be unclear.",
+        },
+        {
+            "resource_name": "Community Transportation Voucher Program",
+            "category": "Transportation",
+            "city": "Walker",
+            "state": "MI",
+            "lat": 43.0014,
+            "lon": -85.7681,
+            "area_served": "Walker / Grand Rapids area",
+            "available_24_7": "No",
+            "business_hours": "Mon-Fri 9 AM-3 PM",
+            "phone": "616-555-0404",
+            "group_email": "transport@example.org",
+            "website": "https://example.org/transport",
+            "eligibility": "Appointment required; limited vouchers",
+            "transportation_required": "No",
+            "remote_option": "Yes",
+            "last_verified_date": "2026-05-10",
+            "verification_method": "Synthetic record",
+            "status": "Needs verification",
+            "notes": "Could support access to food, housing, medical, or legal resources.",
+        },
+        {
+            "resource_name": "Legal Aid Intake Desk",
+            "category": "Legal / Administrative",
+            "city": "Grand Rapids",
+            "state": "MI",
+            "lat": 42.9709,
+            "lon": -85.6700,
+            "area_served": "West Michigan",
+            "available_24_7": "No",
+            "business_hours": "Mon-Fri 9 AM-5 PM",
+            "phone": "616-555-0505",
+            "group_email": "legal@example.org",
+            "website": "https://example.org/legal",
+            "eligibility": "Income and case-type screening may apply",
+            "transportation_required": "Sometimes",
+            "remote_option": "Partial",
+            "last_verified_date": "2026-05-25",
+            "verification_method": "Synthetic record",
+            "status": "Needs verification",
+            "notes": "Good example of eligibility screening barrier.",
+        },
+        {
+            "resource_name": "Family Readiness Support Mailbox",
+            "category": "Family Readiness / FRG",
+            "city": "Lansing",
+            "state": "MI",
+            "lat": 42.7325,
+            "lon": -84.5555,
+            "area_served": "Michigan military-connected families",
+            "available_24_7": "No",
+            "business_hours": "Business hours",
+            "phone": "517-555-0606",
+            "group_email": "familyreadiness@example.mil",
+            "website": "https://example.org/frg",
+            "eligibility": "Service members, families, caregivers, dependents",
+            "transportation_required": "No",
+            "remote_option": "Yes",
+            "last_verified_date": "2026-06-01",
+            "verification_method": "Synthetic record",
+            "status": "Stable contact preferred",
+            "notes": "Uses stable group mailbox instead of relying on one changing POC.",
+        },
+    ]
 
-1. fast_summary
-2. deep_analysis
-3. source_comparison
-4. monitoring_update
-5. executive_brief
-6. fallback_review
+    return pd.DataFrame(rows)
 
-Return JSON only with:
-- route
-- reason
-- confidence
-- evidence
 
-Project goal:
-{project_goal}
+LOCATION_COORDS = {
+    "grand rapids, mi": (42.9634, -85.6681),
+    "walker, mi": (43.0014, -85.7681),
+    "kentwood, mi": (42.8695, -85.6447),
+    "wyoming, mi": (42.9134, -85.7053),
+    "east lansing, mi": (42.7369, -84.4839),
+    "lansing, mi": (42.7325, -84.5555),
+    "statewide, mi": (42.7335, -84.5555),
+}
 
-Output style requested:
-{output_style}
 
-User request:
-{user_request}
+def normalize_location(location):
+    return str(location or "").strip().lower()
+
+
+def get_location_coords(location):
+    normalized = normalize_location(location)
+    return LOCATION_COORDS.get(normalized)
+
+
+def haversine_miles(lat1, lon1, lat2, lon2):
+    radius_earth_miles = 3958.8
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(delta_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    )
+
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return radius_earth_miles * c
+
+
+def filter_resources_by_category_and_location(resources, category, locations, radius_miles):
+    working = resources.copy()
+
+    if category != "Any / Not Sure":
+        exact = working[working["category"] == category]
+        if not exact.empty:
+            working = exact
+        else:
+            working = working[
+                working["category"].str.contains(category.split("/")[0].strip(), case=False, na=False)
+            ]
+
+    location_points = []
+    for location in locations:
+        coords = get_location_coords(location)
+        if coords:
+            location_points.append((location, coords[0], coords[1]))
+
+    if not location_points:
+        working["distance_miles"] = None
+        working["matched_location"] = "No known coordinate match"
+        return working
+
+    distance_records = []
+
+    for _, row in working.iterrows():
+        nearest_distance = None
+        nearest_location = None
+
+        for location_name, lat, lon in location_points:
+            distance = haversine_miles(lat, lon, row["lat"], row["lon"])
+
+            if nearest_distance is None or distance < nearest_distance:
+                nearest_distance = distance
+                nearest_location = location_name
+
+        row_dict = row.to_dict()
+        row_dict["distance_miles"] = round(nearest_distance, 1) if nearest_distance is not None else None
+        row_dict["matched_location"] = nearest_location
+        distance_records.append(row_dict)
+
+    filtered = pd.DataFrame(distance_records)
+
+    statewide_mask = filtered["city"].str.lower().eq("statewide")
+    radius_mask = filtered["distance_miles"].fillna(9999) <= radius_miles
+
+    return filtered[statewide_mask | radius_mask].sort_values(
+        by=["available_24_7", "distance_miles"], ascending=[False, True]
+    )
+
+
+def analyze_resource_gaps_and_build_contingency_plan(
+    user_need,
+    resource_category,
+    primary_location,
+    additional_locations,
+    radius_miles,
+    context,
+    selected_outputs,
+    resource_data,
+):
+    """
+    Custom Project 3 tool.
+
+    It analyzes resource fit, access barriers, eligibility issues, validation flags,
+    contingency plans, outreach drafts, tracker rows, and system gap notes.
+    """
+
+    locations = [primary_location] + list(additional_locations or [])
+    locations = [loc.strip() for loc in locations if str(loc).strip()]
+
+    resources = pd.DataFrame(resource_data)
+    matches = filter_resources_by_category_and_location(
+        resources=resources,
+        category=resource_category,
+        locations=locations,
+        radius_miles=radius_miles,
+    )
+
+    if matches.empty:
+        matches = resources.head(3).copy()
+        matches["distance_miles"] = None
+        matches["matched_location"] = "Fallback synthetic match"
+
+    matches = matches.head(5)
+
+    fit_concerns = []
+    eligibility_barriers = []
+    access_barriers = []
+    twenty_four_seven_gaps = []
+    validation_flags = []
+
+    needs_24_7 = context.get("needs_24_7") == "Yes"
+    transportation = context.get("transportation")
+    documentation = context.get("documents_available")
+    audience = context.get("audience")
+
+    for _, row in matches.iterrows():
+        name = row["resource_name"]
+
+        if str(row["status"]).lower().startswith("needs"):
+            validation_flags.append(f"{name}: contact details should be verified before relying on this resource.")
+
+        if needs_24_7 and row["available_24_7"] != "Yes":
+            twenty_four_seven_gaps.append(f"{name}: not 24/7; may fail for urgent or third-shift access.")
+
+        if transportation in ["No", "Limited", "Public transit only"] and row["transportation_required"] in [
+            "Yes",
+            "Sometimes",
+        ]:
+            access_barriers.append(
+                f"{name}: transportation may be a barrier because the user selected '{transportation}'."
+            )
+
+        if documentation in ["No", "Not sure"] and any(
+            term in str(row["eligibility"]).lower()
+            for term in ["proof", "photo id", "income", "dd214", "service"]
+        ):
+            eligibility_barriers.append(f"{name}: eligibility may require documentation or screening.")
+
+        if audience == "Community member" and "service" in str(row["eligibility"]).lower():
+            eligibility_barriers.append(f"{name}: may be limited to military-connected users.")
+
+    if not fit_concerns:
+        fit_concerns.append(
+            "Resource fit depends on eligibility, current availability, hours, transportation, and verification status."
+        )
+
+    if not validation_flags:
+        validation_flags.append(
+            "No major validation issue identified in the synthetic data, but real-world use would require phone/website verification."
+        )
+
+    contingency_plans = [
+        {
+            "plan": "Plan A",
+            "title": "Use the closest matching resource first",
+            "steps": [
+                "Contact the best-fit provider using the stable office phone, group email, or official website.",
+                "Confirm eligibility, hours, documents required, and whether appointments are needed.",
+                "Record the result in the tracker and set a follow-up date.",
+            ],
+        },
+        {
+            "plan": "Plan B",
+            "title": "Use a 24/7 or remote navigation fallback",
+            "steps": [
+                "If the best-fit provider is closed, unreachable, or business-hours only, use a 24/7 navigation line or remote option.",
+                "Ask for resources that match the user’s location, transportation limits, eligibility, and urgency.",
+                "Record any new referrals and flag repeated barriers.",
+            ],
+        },
+        {
+            "plan": "Plan C",
+            "title": "Escalate the access gap",
+            "steps": [
+                "If multiple resources fail for the same reason, summarize the barrier as a system gap.",
+                "Identify whether the issue is hours, transportation, eligibility, documentation, location, or outdated contact data.",
+                "Prepare a short gap brief for SRWC/FRG/resource coordinators or support staff.",
+            ],
+        },
+    ]
+
+    best_match = matches.iloc[0].to_dict()
+
+    outreach_email = f"""Subject: Resource Fit / Eligibility Confirmation Request
+
+Hello,
+
+I am trying to confirm whether your program may be a fit for someone seeking support related to: {user_need}
+
+Could you please confirm:
+1. Whether your program currently provides this type of support
+2. Eligibility requirements, including location, age, income, military/veteran/family status, or documentation
+3. Current hours and whether any after-hours or remote options exist
+4. Best intake method: phone, email, website, walk-in, appointment, or referral
+5. Whether transportation or in-person pickup is required
+
+I am not asking you to accept a referral through this message yet. I am only trying to verify fit, availability, and next steps before sending someone in the wrong direction.
+
+Thank you."""
+
+    tracker_rows = []
+
+    for _, row in matches.iterrows():
+        tracker_rows.append(
+            {
+                "Case ID": f"LIFT-{datetime.now().strftime('%Y%m%d')}-001",
+                "Need Category": resource_category,
+                "User Need": user_need,
+                "Resource Name": row["resource_name"],
+                "Matched Location": row.get("matched_location", ""),
+                "Distance Miles": row.get("distance_miles", ""),
+                "Contact Method": "Phone / Email / Website",
+                "Phone": row["phone"],
+                "Email": row["group_email"],
+                "Website": row["website"],
+                "Status": "Pending Outreach",
+                "Progress %": 10,
+                "Follow-Up Due Date": "",
+                "Barrier Identified": "; ".join(
+                    [
+                        flag
+                        for flag in access_barriers + eligibility_barriers + twenty_four_seven_gaps
+                        if row["resource_name"] in flag
+                    ]
+                ),
+                "Next Action": "Verify eligibility, hours, availability, and intake process.",
+                "Outcome": "",
+                "Notes": row["notes"],
+            }
+        )
+
+    system_gap_notes = [
+        "This draft uses synthetic/public-style data only.",
+        "Repeated barriers should be tracked by type: transportation, documentation, eligibility, location, hours, or outdated contact information.",
+        "Future production versions could add consent-based email/voicemail review, login, audit logs, and limited permissions.",
+    ]
+
+    if twenty_four_seven_gaps:
+        system_gap_notes.append("Potential system gap: selected need may not have enough 24/7 or after-hours coverage.")
+
+    if access_barriers:
+        system_gap_notes.append("Potential system gap: transportation limits may prevent access to listed resources.")
+
+    return {
+        "matched_resources": matches.to_dict(orient="records"),
+        "fit_concerns": fit_concerns,
+        "eligibility_barriers": eligibility_barriers,
+        "access_barriers": access_barriers,
+        "twenty_four_seven_gaps": twenty_four_seven_gaps,
+        "validation_flags": validation_flags,
+        "contingency_plans": contingency_plans,
+        "outreach_email_draft": outreach_email,
+        "tracker_rows": tracker_rows,
+        "system_gap_notes": system_gap_notes,
+        "recommended_first_resource": best_match.get("resource_name", ""),
+    }
+
+
+def demo_route_decision(user_need, resource_category, context):
+    """
+    Demo fallback when no API key is available.
+    Clearly labeled so it is not represented as a live LLM decision.
+    """
+
+    text = f"{user_need} {resource_category}".lower()
+
+    if context.get("needs_24_7") == "Yes":
+        route = "gap_analysis"
+        reason = "Demo fallback selected gap_analysis because the user needs 24/7 access."
+    elif any(word in text for word in ["verify", "phone", "website", "still open", "valid"]):
+        route = "validation_review"
+        reason = "Demo fallback selected validation_review based on validation-related language."
+    elif any(word in text for word in ["email", "reach out", "contact", "provider"]):
+        route = "outreach_email"
+        reason = "Demo fallback selected outreach_email based on outreach language."
+    elif any(word in text for word in ["tracker", "follow up", "follow-up", "called"]):
+        route = "tracker_generation"
+        reason = "Demo fallback selected tracker_generation based on follow-up language."
+    elif any(word in text for word in ["policy", "gap", "failed", "barrier"]):
+        route = "system_gap_brief"
+        reason = "Demo fallback selected system_gap_brief based on system-gap language."
+    else:
+        route = "location_radius_match"
+        reason = (
+            "Demo fallback selected location_radius_match because the user provided a resource need and "
+            "location/radius context."
+        )
+
+    return {
+        "routing_mode": "DEMO FALLBACK - not a live LLM decision",
+        "selected_route": route,
+        "reason": reason,
+        "confidence": "demo-only",
+        "tool_used": "analyze_resource_gaps_and_build_contingency_plan",
+    }
+
+
+def llm_select_route(client, user_need, resource_category, primary_location, additional_locations, radius_miles, context):
+    prompt = f"""
+You are the LIFT Agent router.
+
+LIFT means Locate. Identify. Follow-up. Track.
+
+Choose exactly one route:
+{json.dumps(ROUTES, indent=2)}
+
+Route definitions:
+- resource_match: user mainly needs matching resources.
+- location_radius_match: location, distance, or multiple search areas matter.
+- gap_analysis: barriers, eligibility, hours, transportation, or fit issues matter.
+- validation_review: user needs to verify phone, website, hours, or resource status.
+- outreach_email: user needs a provider outreach message.
+- tracker_generation: user needs follow-up rows or action tracking.
+- system_gap_brief: user needs a higher-level gap report.
+- fallback_review: unclear request.
+
+Return JSON only:
+{{
+  "selected_route": "...",
+  "reason": "...",
+  "confidence": "low/medium/high",
+  "evidence": ["...", "..."],
+  "tool_used": "analyze_resource_gaps_and_build_contingency_plan"
+}}
+
+User need:
+{user_need}
+
+Resource category:
+{resource_category}
+
+Primary location:
+{primary_location}
+
+Additional locations:
+{additional_locations}
+
+Radius miles:
+{radius_miles}
+
+Context:
+{json.dumps(context, indent=2)}
 """
 
     response = client.chat.completions.create(
         model=DEFAULT_MODEL,
         messages=[
-            {
-                "role": "system",
-                "content": "You choose the best route for an AI application. Return valid JSON only.",
-            },
-            {"role": "user", "content": route_prompt.strip()},
+            {"role": "system", "content": "You route resource navigation requests. Return valid JSON only."},
+            {"role": "user", "content": prompt.strip()},
         ],
         temperature=0,
     )
 
-    raw_content = response.choices[0].message.content or ""
-    route_decision = parse_json_safely(raw_content)
+    raw = response.choices[0].message.content or ""
+    parsed = parse_json_safely(raw)
 
-    route = route_decision.get("route", "fallback_review")
-    if route not in ROUTE_MODEL_MAP:
-        route = "fallback_review"
+    selected_route = parsed.get("selected_route", "fallback_review")
 
-    selected_model = ROUTE_MODEL_MAP[route]
+    if selected_route not in ROUTES:
+        selected_route = "fallback_review"
 
     return {
-        "routing_mode": "LLM route selection with model dispatch",
+        "routing_mode": "LIVE LLM ROUTE DECISION",
         "router_model": DEFAULT_MODEL,
-        "selected_route": route,
-        "selected_model": selected_model,
-        "reason": route_decision.get("reason", "No reason returned."),
-        "confidence": route_decision.get("confidence", "unknown"),
-        "evidence": route_decision.get("evidence", []),
-        "raw_router_response": raw_content,
+        "selected_route": selected_route,
+        "reason": parsed.get("reason", "No reason returned."),
+        "confidence": parsed.get("confidence", "unknown"),
+        "evidence": parsed.get("evidence", []),
+        "tool_used": "analyze_resource_gaps_and_build_contingency_plan",
+        "raw_router_response": raw,
     }
 
 
-def build_generation_messages(user_request, output_style, project_goal, route_trace):
-    system_message = f"""
-You are {APP_NAME}.
-
-You are a final Project 3 AI application assistant.
-
-Required workflow:
-1. Use the analyze_project_request function tool before writing the final output.
-2. Use the tool result as the grounding layer.
-3. Do not claim external verification unless a search tool was actually used.
-4. Separate facts from assumptions.
-5. Show uncertainty when information is incomplete.
-6. Produce a clean structured output for the selected output style.
-7. Do not include secrets, API keys, passwords, or sensitive data.
-"""
-
-    user_message = f"""
-Project goal:
-{project_goal}
-
-Output style:
-{output_style}
-
-LLM routing decision:
-{json.dumps(route_trace, indent=2)}
-
-User request:
-{user_request}
-
-After the function tool returns its result, write the final answer.
-"""
-
-    return [
-        {"role": "system", "content": system_message.strip()},
-        {"role": "user", "content": user_message.strip()},
-    ]
-
-
-def run_llm_tool_workflow(user_request, output_style, project_goal):
+def run_live_llm_tool_workflow(
+    user_need,
+    resource_category,
+    primary_location,
+    additional_locations,
+    radius_miles,
+    context,
+    selected_outputs,
+    resource_data,
+):
     client = get_openai_client()
 
     route_trace = llm_select_route(
         client=client,
-        user_request=user_request,
-        output_style=output_style,
-        project_goal=project_goal,
+        user_need=user_need,
+        resource_category=resource_category,
+        primary_location=primary_location,
+        additional_locations=additional_locations,
+        radius_miles=radius_miles,
+        context=context,
     )
 
-    selected_model = route_trace["selected_model"]
-
-    messages = build_generation_messages(
-        user_request=user_request,
-        output_style=output_style,
-        project_goal=project_goal,
-        route_trace=route_trace,
-    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are LIFT Agent, an AI-assisted resource matching, gap review, outreach drafting, "
+                "and follow-up tracking assistant. You must call the custom tool before writing the final response."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "user_need": user_need,
+                    "resource_category": resource_category,
+                    "primary_location": primary_location,
+                    "additional_locations": additional_locations,
+                    "radius_miles": radius_miles,
+                    "context": context,
+                    "selected_outputs": selected_outputs,
+                    "route_trace": route_trace,
+                },
+                indent=2,
+            ),
+        },
+    ]
 
     first_response = client.chat.completions.create(
-        model=selected_model,
+        model=DEFAULT_MODEL,
         messages=messages,
-        tools=[ANALYZE_PROJECT_REQUEST_TOOL],
+        tools=[ANALYZE_RESOURCE_GAP_TOOL],
         tool_choice={
             "type": "function",
-            "function": {"name": "analyze_project_request"},
+            "function": {"name": "analyze_resource_gaps_and_build_contingency_plan"},
         },
         temperature=0.2,
     )
@@ -284,45 +741,27 @@ def run_llm_tool_workflow(user_request, output_style, project_goal):
     tool_calls = first_message.tool_calls or []
 
     if not tool_calls:
-        raise RuntimeError(
-            "The model did not request analyze_project_request. The output was not generated because model tool use is required."
-        )
+        raise RuntimeError("The model did not request the custom tool.")
 
     messages.append(first_message.model_dump(exclude_none=True))
 
-    tool_trace = {
-        "generation_mode": "LLM routing plus model-callable tool workflow",
-        "selected_route": route_trace["selected_route"],
-        "selected_model": selected_model,
-        "tool_requested_by_model": False,
-        "tool_name": "",
-        "tool_result_summary": {},
-        "workflow_steps": [
-            "The app asked the LLM router to choose a route.",
-            "The app mapped the chosen route to a model.",
-            "The app provided a function schema to the selected model.",
-            "The model requested analyze_project_request.",
-            "The app executed the local Python tool.",
-            "The tool result was returned to the model.",
-            "The model generated the final output using the tool result.",
-        ],
-    }
+    tool_result = None
 
     for tool_call in tool_calls:
-        tool_name = tool_call.function.name
+        if tool_call.function.name != "analyze_resource_gaps_and_build_contingency_plan":
+            raise RuntimeError(f"Unexpected tool requested: {tool_call.function.name}")
 
-        if tool_name != "analyze_project_request":
-            raise RuntimeError(f"Unexpected tool requested by model: {tool_name}")
+        arguments = parse_json_safely(tool_call.function.arguments)
 
-        try:
-            arguments = json.loads(tool_call.function.arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {}
-
-        tool_result = analyze_project_request(
-            user_request=arguments.get("user_request", user_request),
-            output_style=arguments.get("output_style", output_style),
-            project_goal=arguments.get("project_goal", project_goal),
+        tool_result = analyze_resource_gaps_and_build_contingency_plan(
+            user_need=arguments.get("user_need", user_need),
+            resource_category=arguments.get("resource_category", resource_category),
+            primary_location=arguments.get("primary_location", primary_location),
+            additional_locations=arguments.get("additional_locations", additional_locations),
+            radius_miles=arguments.get("radius_miles", radius_miles),
+            context=arguments.get("context", context),
+            selected_outputs=arguments.get("selected_outputs", selected_outputs),
+            resource_data=resource_data,
         )
 
         messages.append(
@@ -333,378 +772,481 @@ def run_llm_tool_workflow(user_request, output_style, project_goal):
             }
         )
 
-        tool_trace["tool_requested_by_model"] = True
-        tool_trace["tool_name"] = "analyze_project_request"
-        tool_trace["tool_result_summary"] = {
-            "complexity": tool_result["complexity"],
-            "word_count": tool_result["word_count"],
-            "keywords": tool_result["keywords"],
-            "recommended_output_elements": tool_result["recommended_output_elements"],
-        }
+    final_instruction = """
+Write a concise structured report using the tool result.
+Include:
+1. Best-fit resource summary
+2. Main access/eligibility gaps
+3. Three contingency options
+4. Outreach draft note
+5. Tracker next steps
+6. System gap note
+
+Do not claim real-world verification. State that resource data is synthetic/public-style draft data.
+"""
+
+    messages.append({"role": "user", "content": final_instruction.strip()})
 
     final_response = client.chat.completions.create(
-        model=selected_model,
+        model=DEFAULT_MODEL,
         messages=messages,
         temperature=0.3,
     )
 
-    final_output = final_response.choices[0].message.content or ""
+    final_text = final_response.choices[0].message.content or ""
 
-    if not final_output.strip():
-        raise RuntimeError("The model returned an empty output.")
+    tool_trace = {
+        "tool_requested_by_model": True,
+        "tool_name": "analyze_resource_gaps_and_build_contingency_plan",
+        "tool_mode": "OpenAI model-callable function tool",
+        "tool_result_keys": list(tool_result.keys()) if tool_result else [],
+    }
 
-    return final_output, route_trace, tool_trace
-
-
-def save_output(output_text, metadata):
-    OUTPUTS_DIR.mkdir(exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = OUTPUTS_DIR / f"project3_output_{timestamp}.md"
-
-    record = f"""# Project 3 Output
-
-## Metadata
-
-```json
-{json.dumps(metadata, indent=2)}
-```
-
-## Output
-
-{output_text}
-"""
-
-    path.write_text(record, encoding="utf-8")
-    return path
+    return final_text, route_trace, tool_trace, tool_result
 
 
-def save_eval_record(expected_output, actual_output, metadata, route_trace, tool_trace):
-    TESTS_DIR.mkdir(exist_ok=True)
-    path = TESTS_DIR / "eval_results.md"
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def build_demo_report(tool_result, route_trace):
+    lines = [
+        "## LIFT Resource Plan",
+        "",
+        f"**Recommended first resource:** {tool_result.get('recommended_first_resource', 'No recommendation available')}",
+        "",
+        "### Why this route was selected",
+        f"- {route_trace.get('reason')}",
+        "",
+        "### Main fit and gap concerns",
+    ]
 
-    record = f"""
-## Evaluation Record
+    for item in (
+        tool_result.get("fit_concerns", [])
+        + tool_result.get("eligibility_barriers", [])
+        + tool_result.get("access_barriers", [])
+        + tool_result.get("twenty_four_seven_gaps", [])
+        + tool_result.get("validation_flags", [])
+    ):
+        lines.append(f"- {item}")
 
-Date:
-{created_at}
+    lines.append("")
+    lines.append("### Three contingency options")
 
-Test purpose:
-Confirm Project 3 uses an LLM routing decision and a model-callable tool before generating the final output.
+    for plan in tool_result.get("contingency_plans", []):
+        lines.append(f"**{plan['plan']}: {plan['title']}**")
+        for step in plan["steps"]:
+            lines.append(f"- {step}")
+        lines.append("")
 
-Expected output:
-{expected_output.strip()}
+    lines.append("### User-approved outreach draft")
+    lines.append("This is a draft only. Nothing is sent automatically.")
+    lines.append("")
+    lines.append("```text")
+    lines.append(tool_result.get("outreach_email_draft", ""))
+    lines.append("```")
+    lines.append("")
+    lines.append("### System gap notes")
 
-Actual output:
-{actual_output.strip()}
+    for note in tool_result.get("system_gap_notes", []):
+        lines.append(f"- {note}")
 
-Metadata:
-~~~json
-{json.dumps(metadata, indent=2)}
-~~~
-
-LLM route trace:
-~~~json
-{json.dumps(route_trace, indent=2)}
-~~~
-
-Model tool trace:
-~~~json
-{json.dumps(tool_trace, indent=2)}
-~~~
-
-Result:
-Successful if the route trace shows an LLM-selected route/model and the tool trace shows the model requested analyze_project_request.
-
----
-"""
-
-    with path.open("a", encoding="utf-8") as file:
-        file.write(record)
-
-    return path
+    return "\n".join(lines)
 
 
-def render_generate_tab():
-    st.header("1. Define the Project 3 Task")
-
-    project_goal = st.text_area(
-        "Project goal",
-        value=(
-            "Help a user turn public or synthetic input into a structured, grounded decision-support output."
-        ),
-        height=100,
+def render_privacy_notice():
+    st.info(
+        "Use public or synthetic information only. Do not enter private, classified, restricted, protected, "
+        "or sensitive information. This draft does not send emails, monitor phones, access voicemail, or scan inboxes."
     )
 
-    output_style = st.selectbox(
-        "Output style",
+
+def render_generate_page():
+    st.header("1. Locate the need")
+
+    col_left, col_right = st.columns([2, 1])
+
+    with col_left:
+        user_need = st.text_area(
+            "What does the user need help with?",
+            placeholder=(
+                "Example: I need a food pantry near Grand Rapids, but I work third shift "
+                "and have limited transportation."
+            ),
+            height=140,
+        )
+
+    with col_right:
+        resource_category = st.selectbox(
+            "Resource category",
+            [
+                "Any / Not Sure",
+                "Food / Basic Needs",
+                "Housing / Utilities",
+                "Financial Assistance",
+                "Transportation",
+                "Legal / Administrative",
+                "Behavioral Health",
+                "Emergency / 24-7 Crisis",
+                "Veteran / Service Member Support",
+                "Family Readiness / FRG",
+                "General Support / 24-7 Navigation",
+            ],
+        )
+
+        urgency = st.selectbox("Urgency", ["Routine", "Soon", "Urgent", "Crisis / immediate"])
+
+    st.header("2. Identify location and access limits")
+
+    loc_col1, loc_col2, loc_col3 = st.columns(3)
+
+    with loc_col1:
+        primary_location = st.text_input("Primary search location", value="Grand Rapids, MI")
+
+    with loc_col2:
+        additional_locations_text = st.text_input(
+            "Additional locations",
+            placeholder="Walker, MI; Kentwood, MI; Wyoming, MI",
+        )
+
+    with loc_col3:
+        radius_miles = st.slider("Search radius in miles", 5, 100, 25, step=5)
+
+    additional_locations = [
+        item.strip()
+        for item in additional_locations_text.replace(",", ";").split(";")
+        if item.strip()
+    ]
+
+    st.header("3. Fit and eligibility context")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        audience = st.selectbox(
+            "User type",
+            [
+                "Service member",
+                "Veteran",
+                "Military-connected family",
+                "Caregiver",
+                "Dependent",
+                "Community member",
+                "Not sure",
+            ],
+        )
+
+    with c2:
+        transportation = st.selectbox("Transportation", ["Yes", "No", "Limited", "Public transit only"])
+
+    with c3:
+        needs_24_7 = st.selectbox("Needs 24/7 or after-hours option?", ["No", "Yes", "Not sure"])
+
+    with c4:
+        documents_available = st.selectbox("Documents available?", ["Yes", "No", "Not sure"])
+
+    context = {
+        "audience": audience,
+        "transportation": transportation,
+        "needs_24_7": needs_24_7,
+        "documents_available": documents_available,
+        "urgency": urgency,
+    }
+
+    st.header("4. Follow-up outputs")
+
+    selected_outputs = st.multiselect(
+        "What should LIFT generate?",
         [
-            "Concise summary",
-            "Detailed analysis",
-            "Source comparison",
-            "Executive brief",
-            "Monitoring update",
-            "Action plan",
+            "Resource fit summary",
+            "Gap analysis",
+            "Three contingency plans",
+            "User-approved outreach draft",
+            "Tracker rows",
+            "System gap notes",
+            "Map view",
+            "CSV tracker download",
+        ],
+        default=[
+            "Resource fit summary",
+            "Gap analysis",
+            "Three contingency plans",
+            "User-approved outreach draft",
+            "Tracker rows",
+            "System gap notes",
+            "Map view",
+            "CSV tracker download",
         ],
     )
 
-    user_request = st.text_area(
-        "User request / public or synthetic input",
-        height=260,
-        placeholder="Paste the request or safe public/synthetic information here.",
-    )
+    api_key = get_openai_api_key()
 
-    input_errors, input_warnings = validate_user_input(user_request)
-
-    for warning in input_warnings:
-        st.warning(warning)
-
-    for error in input_errors:
-        if user_request.strip():
-            st.error(error)
-
-    st.divider()
-
-    st.header("2. Generate")
-
-    if not OPENAI_AVAILABLE:
-        st.error(
-            f"The openai package is not installed. Install it with: pip install openai. Details: {OPENAI_IMPORT_ERROR}"
-        )
-
-    if not get_openai_api_key():
+    if not api_key:
         st.warning(
-            "OPENAI_API_KEY is missing. Add it to Streamlit secrets or a local .env/environment variable before generating."
+            "OPENAI_API_KEY is missing. Demo Mode will run with synthetic data and a clearly labeled fallback route. "
+            "Demo Mode is interactive, but it is not a live LLM decision."
         )
 
-    generate_button = st.button("Generate Project 3 Output", type="primary", use_container_width=True)
+    generate = st.button("Generate LIFT Plan", type="primary", use_container_width=True)
 
-    if generate_button:
-        if not user_request.strip():
-            st.error("Enter a request before generating.")
+    if generate:
+        if not user_need.strip():
+            st.error("Enter a resource need first.")
             st.stop()
 
-        with st.spinner("Running LLM route selection and model-callable tool workflow..."):
+        resources_df = synthetic_resource_data()
+        resource_data = resources_df.to_dict(orient="records")
+
+        with st.spinner("Running LIFT workflow..."):
             try:
-                final_output, route_trace, tool_trace = run_llm_tool_workflow(
-                    user_request=user_request,
-                    output_style=output_style,
-                    project_goal=project_goal,
-                )
+                if api_key and OPENAI_AVAILABLE:
+                    final_text, route_trace, tool_trace, tool_result = run_live_llm_tool_workflow(
+                        user_need=user_need,
+                        resource_category=resource_category,
+                        primary_location=primary_location,
+                        additional_locations=additional_locations,
+                        radius_miles=radius_miles,
+                        context=context,
+                        selected_outputs=selected_outputs,
+                        resource_data=resource_data,
+                    )
+                else:
+                    route_trace = demo_route_decision(
+                        user_need=user_need,
+                        resource_category=resource_category,
+                        context=context,
+                    )
 
-                metadata = {
-                    "app_name": APP_NAME,
-                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "project_goal": project_goal,
-                    "output_style": output_style,
-                    "generation_mode": "LLM routing plus model-callable tool workflow",
-                    "selected_route": route_trace.get("selected_route", ""),
-                    "selected_model": route_trace.get("selected_model", ""),
-                    "tool_used": tool_trace.get("tool_name", ""),
-                }
+                    tool_result = analyze_resource_gaps_and_build_contingency_plan(
+                        user_need=user_need,
+                        resource_category=resource_category,
+                        primary_location=primary_location,
+                        additional_locations=additional_locations,
+                        radius_miles=radius_miles,
+                        context=context,
+                        selected_outputs=selected_outputs,
+                        resource_data=resource_data,
+                    )
 
-                st.session_state.latest_output = final_output
-                st.session_state.latest_metadata = metadata
-                st.session_state.latest_route_trace = route_trace
-                st.session_state.latest_tool_trace = tool_trace
-                st.session_state.latest_eval_saved = False
+                    tool_trace = {
+                        "tool_requested_by_model": False,
+                        "tool_name": "analyze_resource_gaps_and_build_contingency_plan",
+                        "tool_mode": "Demo fallback direct local call",
+                        "note": "This proves the workflow and custom tool output, but not live LLM tool-calling.",
+                    }
 
-                st.success("Output generated with LLM routing and model-callable tool use.")
+                    final_text = build_demo_report(tool_result, route_trace)
+
+                st.session_state["route_trace"] = route_trace
+                st.session_state["tool_trace"] = tool_trace
+                st.session_state["tool_result"] = tool_result
+                st.session_state["final_text"] = final_text
+                st.session_state["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             except Exception as error:
-                st.error("The output could not be generated.")
+                st.error("The LIFT workflow could not run.")
                 st.exception(error)
 
-    if st.session_state.latest_output:
+    if st.session_state.get("final_text"):
         st.divider()
-        st.header("Generated Output")
+        st.header("LIFT Output")
 
-        with st.expander("LLM Routing Decision", expanded=True):
-            st.json(st.session_state.latest_route_trace)
+        trace_col1, trace_col2 = st.columns(2)
 
-        with st.expander("Model Tool Use Trace", expanded=True):
-            st.json(st.session_state.latest_tool_trace)
+        with trace_col1:
+            st.subheader("AI Decision Trace")
+            st.json(st.session_state["route_trace"])
 
-        st.markdown(st.session_state.latest_output)
+        with trace_col2:
+            st.subheader("Custom Tool Trace")
+            st.json(st.session_state["tool_trace"])
 
-        col_save, col_download = st.columns(2)
+        st.markdown(st.session_state["final_text"])
 
-        with col_save:
-            if st.button("Save Output", use_container_width=True):
-                path = save_output(
-                    st.session_state.latest_output,
-                    st.session_state.latest_metadata,
-                )
-                st.success("Output saved.")
-                st.write(f"Saved to: {path}")
+        tool_result = st.session_state["tool_result"]
 
-        with col_download:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.subheader("Matched Resources")
+        matched_df = pd.DataFrame(tool_result.get("matched_resources", []))
+
+        if not matched_df.empty:
+            visible_columns = [
+                "resource_name",
+                "category",
+                "city",
+                "area_served",
+                "available_24_7",
+                "business_hours",
+                "phone",
+                "group_email",
+                "website",
+                "eligibility",
+                "status",
+                "distance_miles",
+            ]
+            existing_columns = [col for col in visible_columns if col in matched_df.columns]
+            st.dataframe(matched_df[existing_columns], use_container_width=True)
+
+            if "Map view" in selected_outputs and {"lat", "lon"}.issubset(matched_df.columns):
+                st.subheader("Map View")
+                st.map(matched_df.rename(columns={"lat": "latitude", "lon": "longitude"}))
+
+        st.subheader("Tracker Rows")
+        tracker_df = pd.DataFrame(tool_result.get("tracker_rows", []))
+
+        if not tracker_df.empty:
+            st.dataframe(tracker_df, use_container_width=True)
+
+            csv_data = tracker_df.to_csv(index=False)
+
             st.download_button(
-                "Download Output as Markdown",
-                data=st.session_state.latest_output,
-                file_name=f"project3_output_{timestamp}.md",
-                mime="text/markdown",
+                "Download Tracker CSV",
+                data=csv_data,
+                file_name=f"lift_tracker_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
                 use_container_width=True,
             )
 
-        st.divider()
-        st.header("Evaluation Record")
-
-        expected_output = st.text_area(
-            "Expected output",
-            value=(
-                "The app should select an LLM route, dispatch to a selected model, call analyze_project_request, "
-                "and then generate a structured output using the tool result."
-            ),
-            height=130,
-            key="expected_output",
+        st.subheader("Outreach Draft Approval")
+        st.caption("Draft only. The app does not send this message.")
+        outreach_text = st.text_area(
+            "Review/edit outreach draft",
+            value=tool_result.get("outreach_email_draft", ""),
+            height=260,
         )
 
-        actual_output = st.text_area(
-            "Actual output",
-            value=st.session_state.latest_output,
-            height=220,
-            key="actual_output",
+        st.checkbox(
+            "I reviewed this draft. I understand LIFT does not send outreach automatically.",
+            value=False,
         )
 
-        if st.button("Save Evaluation Record", use_container_width=True):
-            path = save_eval_record(
-                expected_output=expected_output,
-                actual_output=actual_output,
-                metadata=st.session_state.latest_metadata,
-                route_trace=st.session_state.latest_route_trace,
-                tool_trace=st.session_state.latest_tool_trace,
-            )
-            st.session_state.latest_eval_saved = True
-            st.success("Evaluation record saved.")
-            st.write(f"Saved to: {path}")
+        st.download_button(
+            "Download Outreach Draft",
+            data=outreach_text,
+            file_name=f"lift_outreach_draft_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
 
 
-def render_monitoring_tab():
-    st.header("Monitoring / Change Detection")
-
-    st.markdown(
-        "Use this simple section to prove the app can compare an older input with an updated input."
-    )
-
-    previous_text = st.text_area("Previous text", height=180)
-    updated_text = st.text_area("Updated text", height=180)
-
-    if st.button("Compare Text"):
-        if not previous_text.strip() or not updated_text.strip():
-            st.error("Paste both previous and updated text.")
-        else:
-            result = compare_text_changes(previous_text, updated_text)
-            save_monitoring_result(result)
-            st.json(result)
-
-
-def render_docs_tab():
-    st.header("Project Documentation Helper")
+def render_about_page():
+    st.header("About LIFT Agent")
 
     st.markdown(
         """
-Use this section as a checklist while finishing Project 3.
+**LIFT Agent** stands for **Locate. Identify. Follow-up. Track.**
 
-### Required evidence to keep
+This Project 3 draft is not a generic chatbot and not a static resource list. It is designed to show an agentic workflow:
 
-- README explains what the app does.
-- BUILD_LOG documents changes.
-- Tests/eval_results.md includes expected vs actual results.
-- Evidence folder includes screenshots or notes.
-- App shows LLM routing and tool traces.
-- Secrets are not committed.
+1. The user enters a resource need.
+2. The app collects location, radius, eligibility, and access context.
+3. The LLM selects a route when an API key is available.
+4. The model calls a custom tool.
+5. The tool generates resource matches, barriers, contingency options, outreach drafts, tracker rows, and system gap notes.
+6. The user remains the approval layer before any outreach is used.
+
+### What this draft does
+
+- Uses synthetic/public-style data
+- Supports multiple locations and radius-based matching
+- Separates 24/7 support from business-hours resources
+- Flags transportation, documentation, eligibility, and validation barriers
+- Generates user-approved outreach drafts
+- Generates tracker rows and CSV downloads
+- Shows visible route and tool traces
+
+### What this draft does not do
+
+- It does not send emails
+- It does not call providers
+- It does not monitor voicemail
+- It does not scan inboxes
+- It does not store private case files
+- It does not claim real-world verification
+
+Future versions could add consent-based integrations, login, role-based access, audit logs, limited permissions, and data retention controls.
 """
     )
 
-
-def render_about_tab():
-    st.header("About This Project 3 Shell")
-
-    st.markdown(
-        f"""
-{APP_NAME} is a final project starter framework.
-
-It was designed to carry forward the strongest parts of the earlier projects:
-
-- Project 1: clear prompting, grounding, constraints, structured output, and evaluation.
-- Project 2: Streamlit app structure, deployment readiness, demo/auth mode, saved outputs, monitoring, feedback/evaluation logs, and real model-callable tool use.
-- Project 3 improvement: an LLM route decision is made before generation, and the app documents which route/model was selected.
-"""
-    )
-
-    st.subheader("Workflow")
+    st.subheader("Project 3 Agentic Workflow")
 
     st.graphviz_chart(
         """
         digraph {
             rankdir=LR;
 
-            user_input [label="User enters request"];
-            validation [label="Input validation"];
-            router [label="LLM route selection"];
-            model_dispatch [label="Select model by route"];
-            tool_schema [label="Send tool schema"];
-            model_tool_call [label="Model requests analyze_project_request"];
-            app_tool [label="App executes local tool"];
-            tool_result [label="Tool result returned"];
-            output [label="Final structured output"];
-            eval [label="Save eval record"];
+            intake [label="User need + location + context"];
+            router [label="LLM route decision"];
+            tool [label="Custom tool call"];
+            analysis [label="Resource fit + gap analysis"];
+            outputs [label="Outreach draft + tracker + gap notes"];
+            approval [label="User approval layer"];
 
-            user_input -> validation;
-            validation -> router;
-            router -> model_dispatch;
-            model_dispatch -> tool_schema;
-            tool_schema -> model_tool_call;
-            model_tool_call -> app_tool;
-            app_tool -> tool_result;
-            tool_result -> output;
-            output -> eval;
+            intake -> router;
+            router -> tool;
+            tool -> analysis;
+            analysis -> outputs;
+            outputs -> approval;
         }
         """
     )
 
-    st.subheader("Routing Explanation")
 
-    st.write(
-        "This app includes an LLM router that chooses a route. The code then maps that route to a model name. "
-        "This is stronger than only changing prompt wording because the chosen route is recorded and used for dispatch."
+def render_monitoring_page():
+    st.header("Validation / Monitoring Notes")
+
+    st.markdown(
+        """
+This section documents the future validation concept.
+
+For the working draft, validation is manual and synthetic. A production version could validate:
+
+- Website availability
+- Main office phone
+- Group mailbox
+- Business hours
+- 24/7 availability
+- Eligibility requirements
+- Whether the resource still serves the listed area
+
+The app should avoid relying on one individual point of contact because people rotate. Stable contacts are preferred:
+
+- Main office phone
+- Group mailbox
+- Official program website
+- Hotline
+- Intake desk
+"""
     )
 
-    st.subheader("Data Safety Notice")
-    render_safety_notice()
+    old_status = st.text_area("Previous resource note", height=120)
+    new_status = st.text_area("Updated resource note", height=120)
+
+    if st.button("Compare Notes"):
+        if not old_status.strip() or not new_status.strip():
+            st.error("Paste both notes first.")
+        else:
+            st.write("Manual comparison draft:")
+            st.write(f"Previous length: {len(old_status)} characters")
+            st.write(f"Updated length: {len(new_status)} characters")
+
+            if old_status.strip() == new_status.strip():
+                st.success("No change detected.")
+            else:
+                st.warning("Change detected. A future version could summarize this with the LLM.")
 
 
 def main():
-    st.set_page_config(
-        page_title=APP_NAME,
-        page_icon="🧭",
-        layout="wide",
-    )
+    st.set_page_config(page_title=APP_NAME, page_icon="🧭", layout="wide")
 
-    initialize_session_state()
-    ensure_project_folders()
-    render_auth_gate()
-    render_header(APP_NAME, APP_SUBTITLE)
-    render_welcome_panel()
-    render_safety_notice()
+    st.title(APP_NAME)
+    st.caption(f"{APP_TAGLINE} | {APP_SUBTITLE}")
 
-    generate_tab, monitoring_tab, docs_tab, about_tab = st.tabs(
-        ["Generate", "Monitoring", "Docs Checklist", "About"]
-    )
+    render_privacy_notice()
 
-    with generate_tab:
-        render_generate_tab()
+    page = st.sidebar.radio("Navigation", ["Generate LIFT Plan", "Validation Notes", "About"])
 
-    with monitoring_tab:
-        render_monitoring_tab()
-
-    with docs_tab:
-        render_docs_tab()
-
-    with about_tab:
-        render_about_tab()
+    if page == "Generate LIFT Plan":
+        render_generate_page()
+    elif page == "Validation Notes":
+        render_monitoring_page()
+    else:
+        render_about_page()
 
 
 if __name__ == "__main__":
