@@ -1,0 +1,1 @@
+Temporary note: applying MCP tool additions and optional context UI to app.py

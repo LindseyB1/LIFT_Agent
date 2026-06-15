@@ -70,6 +70,30 @@ ANALYZE_RESOURCE_GAP_TOOL = {
     },
 }
 
+# MCP-style tool descriptor for model tool-calling
+MCP_BASIC_PROVIDER_CHECK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "mcp_basic_provider_check",
+        "description": (
+            "Basic provider information check (MCP-style). Returns website status, contact presence, hours, cost, "
+            "appointment/application requirements, documents needed, confidence, notes, and limitations. Uses demo/synthetic data when live checks are not available."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "provider_name": {"type": "string"},
+                "website_url": {"type": "string"},
+                "category": {"type": "string"},
+                "location": {"type": "string"},
+                "user_need": {"type": "string"},
+            },
+            "required": ["provider_name", "website_url"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 
 def get_openai_api_key():
     try:
@@ -354,6 +378,68 @@ def check_provider_website_mcp_tool(provider_name, website_url, category, locati
             "Tool assumes public websites only; does not access restricted or login-required pages.",
         ],
         "recommendation": "Always verify by phone or visit website directly before referring user."
+    }
+
+
+def mcp_basic_provider_check(provider_name, website_url, category=None, location=None, user_need=None):
+    """
+    Wrapper MCP tool that returns the specified schema required by the project.
+    Internally uses the demo `check_provider_website_mcp_tool` for safe synthetic results.
+
+    Returns:
+      - provider_name
+      - website_status: active / unavailable / unknown / demo
+      - confidence: high / medium / low
+      - basic_contact_found: yes / no / unknown
+      - hours_label
+      - cost_label
+      - application_required: yes / no / unknown
+      - appointment_required: yes / no / unknown
+      - documents_needed
+      - notes
+      - limitations
+      - checked_at (timestamp)
+    """
+    raw = check_provider_website_mcp_tool(provider_name, website_url, category or "unknown", location or "unknown")
+
+    # Map raw status to requested labels
+    status_map = {
+        "reachable": "active",
+        "unreachable": "unavailable",
+    }
+
+    website_status = status_map.get(raw.get("status"), "unknown")
+    confidence = raw.get("confidence", "low")
+
+    # Heuristics for basic contact found
+    components = raw.get("website_components_found", [])
+    basic_contact_found = "yes" if any(c in components for c in ("phone", "email")) else "no"
+
+    hours_label = "Hours unknown"
+    if "hours" in components:
+        hours_label = raw.get("notes", "Business hours listed")
+
+    # Cost/app/appointment/documents are unknown in demo mode
+    cost_label = "Cost unknown"
+    application_required = "unknown"
+    appointment_required = "unknown"
+    documents_needed = "unknown"
+
+    checked_at = raw.get("timestamp")
+
+    return {
+        "provider_name": raw.get("provider_name"),
+        "website_status": website_status,
+        "confidence": confidence,
+        "basic_contact_found": basic_contact_found,
+        "hours_label": hours_label,
+        "cost_label": cost_label,
+        "application_required": application_required,
+        "appointment_required": appointment_required,
+        "documents_needed": documents_needed,
+        "notes": raw.get("notes"),
+        "limitations": raw.get("limitations", []),
+        "checked_at": checked_at,
     }
 
 
@@ -799,7 +885,7 @@ def run_live_llm_tool_workflow(
     first_response = client.chat.completions.create(
         model=DEFAULT_MODEL,
         messages=messages,
-        tools=[ANALYZE_RESOURCE_GAP_TOOL],
+        tools=[ANALYZE_RESOURCE_GAP_TOOL, MCP_BASIC_PROVIDER_CHECK_TOOL],
         tool_choice={
             "type": "function",
             "function": {"name": "analyze_resource_gaps_and_build_contingency_plan"},
@@ -818,29 +904,50 @@ def run_live_llm_tool_workflow(
     tool_result = None
 
     for tool_call in tool_calls:
-        if tool_call.function.name != "analyze_resource_gaps_and_build_contingency_plan":
+        # Support both the main analysis tool and the MCP provider check tool
+        if tool_call.function.name == "analyze_resource_gaps_and_build_contingency_plan":
+            arguments = parse_json_safely(tool_call.function.arguments)
+
+            tool_result = analyze_resource_gaps_and_build_contingency_plan(
+                user_need=arguments.get("user_need", user_need),
+                resource_category=arguments.get("resource_category", resource_category),
+                primary_location=arguments.get("primary_location", primary_location),
+                additional_locations=arguments.get("additional_locations", additional_locations),
+                radius_miles=arguments.get("radius_miles", radius_miles),
+                context=arguments.get("context", context),
+                selected_outputs=arguments.get("selected_outputs", selected_outputs),
+                resource_data=resource_data,
+            )
+
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(tool_result, indent=2),
+                }
+            )
+
+        elif tool_call.function.name == "mcp_basic_provider_check":
+            arguments = parse_json_safely(tool_call.function.arguments)
+
+            mcp_result = mcp_basic_provider_check(
+                provider_name=arguments.get("provider_name", ""),
+                website_url=arguments.get("website_url", ""),
+                category=arguments.get("category"),
+                location=arguments.get("location"),
+                user_need=arguments.get("user_need"),
+            )
+
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(mcp_result, indent=2),
+                }
+            )
+
+        else:
             raise RuntimeError(f"Unexpected tool requested: {tool_call.function.name}")
-
-        arguments = parse_json_safely(tool_call.function.arguments)
-
-        tool_result = analyze_resource_gaps_and_build_contingency_plan(
-            user_need=arguments.get("user_need", user_need),
-            resource_category=arguments.get("resource_category", resource_category),
-            primary_location=arguments.get("primary_location", primary_location),
-            additional_locations=arguments.get("additional_locations", additional_locations),
-            radius_miles=arguments.get("radius_miles", radius_miles),
-            context=arguments.get("context", context),
-            selected_outputs=arguments.get("selected_outputs", selected_outputs),
-            resource_data=resource_data,
-        )
-
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps(tool_result, indent=2),
-            }
-        )
 
     final_instruction = """
 Write a concise structured report using the tool result.
@@ -1139,6 +1246,46 @@ def render_generate_page():
         "documents_available": documents_available,
         "urgency": urgency,
     }
+
+    # Optional Context (select only what you're comfortable sharing)
+    st.header("Optional Context")
+    optional_labels = [
+        "Veteran",
+        "Disabled Veteran",
+        "Military family",
+        "Single parent",
+        "Parent/caregiver",
+        "Pregnant/postpartum",
+        "Student",
+        "Senior",
+        "Youth/young adult",
+        "Housing unstable",
+        "No transportation",
+        "Low/no income",
+        "Uninsured",
+        "Food insecure",
+        "Domestic Violence survivor",
+        "Sexual assault survivor",
+        "Mental health support",
+        "Recovery support",
+        "Legal help",
+        "Reentry support",
+        "Immigration help",
+        "Spanish services",
+        "LGBTQIA+ affirming",
+        "Disability resources",
+        "Pet-friendly help",
+        "After-hours services",
+    ]
+
+    selected_optional = []
+    cols = st.columns(3)
+    for i, label in enumerate(optional_labels):
+        col = cols[i % 3]
+        if col.checkbox(label, key=f"optctx_{i}"):
+            selected_optional.append(label)
+
+    st.session_state["optional_context"] = selected_optional
 
     st.header("4. Follow-up outputs")
 
