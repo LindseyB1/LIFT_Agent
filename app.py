@@ -19,7 +19,7 @@ except Exception as error:
 
 APP_NAME = "LIFT Agent"
 APP_TAGLINE = "Locate. Identify. Follow-up. Track."
-APP_SUBTITLE = "AI-assisted resource matching, gap review, outreach drafting, and follow-up tracking."
+APP_SUBTITLE = "Provider matching, warm outreach drafting, basic provider checks, and follow-up tracking using synthetic data."
 
 DEFAULT_MODEL = os.getenv("P3_DEFAULT_MODEL", "gpt-4o-mini")
 
@@ -285,6 +285,76 @@ def synthetic_resource_data():
     ]
 
     return pd.DataFrame(rows)
+
+
+def check_provider_website_mcp_tool(provider_name, website_url, category, location):
+    """
+    MCP-style tool for basic provider website checking.
+    
+    This demonstrates how the agent would call a tool to verify provider information.
+    Uses synthetic/demo data for safety; does not perform real web scraping.
+    
+    Input:
+      - provider_name: name of the provider
+      - website_url: provider's website URL
+      - category: resource category
+      - location: provider location
+      
+    Output:
+      - status: "reachable", "unreachable", or "unknown"
+      - confidence: "high", "medium", or "low"
+      - notes: verification notes
+      - timestamp: when checked
+      - limitations: tool limitations
+    """
+    
+    import random
+    
+    tool_call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+    
+    # For demo purposes, return synthetic results
+    possible_statuses = [
+        {
+            "status": "reachable",
+            "confidence": "high",
+            "notes": f"Website appears to be live. Main page loads successfully. Phone contact and intake information are visible.",
+            "website_components_found": ["phone", "email", "hours", "eligibility", "intake_process"],
+        },
+        {
+            "status": "reachable",
+            "confidence": "medium",
+            "notes": f"Website appears reachable but outdated. Some contact information may need verification by phone.",
+            "website_components_found": ["phone", "email", "hours"],
+        },
+        {
+            "status": "unreachable",
+            "confidence": "medium",
+            "notes": f"Website appears down or DNS failure. Recommend phone contact instead.",
+            "website_components_found": [],
+        },
+    ]
+    
+    result = random.choice(possible_statuses)
+    
+    return {
+        "tool_name": "check_provider_website_mcp_tool",
+        "provider_name": provider_name,
+        "website_url": website_url,
+        "category": category,
+        "location": location,
+        "status": result["status"],
+        "confidence": result["confidence"],
+        "notes": result["notes"],
+        "website_components_found": result.get("website_components_found", []),
+        "timestamp": tool_call_time,
+        "limitations": [
+            "This tool does not perform real web scraping or JavaScript execution.",
+            "Results are from synthetic/demo data only.",
+            "Real-world use would require appropriate consent and security measures.",
+            "Tool assumes public websites only; does not access restricted or login-required pages.",
+        ],
+        "recommendation": "Always verify by phone or visit website directly before referring user."
+    }
 
 
 LOCATION_COORDS = {
@@ -850,6 +920,114 @@ def build_demo_report(tool_result, route_trace):
     return "\n".join(lines)
 
 
+def init_session_state():
+    """Initialize required session state variables for consent and privacy."""
+    if "consent_synthetic_data" not in st.session_state:
+        st.session_state["consent_synthetic_data"] = False
+    if "consent_no_sensitive_data" not in st.session_state:
+        st.session_state["consent_no_sensitive_data"] = False
+    if "consent_no_automation" not in st.session_state:
+        st.session_state["consent_no_automation"] = False
+    if "consent_human_approval" not in st.session_state:
+        st.session_state["consent_human_approval"] = False
+    if "privacy_session_only" not in st.session_state:
+        st.session_state["privacy_session_only"] = False
+    if "privacy_include_notes" not in st.session_state:
+        st.session_state["privacy_include_notes"] = True
+    if "privacy_allow_website_checks" not in st.session_state:
+        st.session_state["privacy_allow_website_checks"] = True
+
+
+def render_privacy_consent_section():
+    """Render the Privacy, Consent, and User Control section."""
+    st.header("Privacy, Consent, and User Control")
+    
+    st.markdown(
+        """
+**LIFT Agent is a draft tool using synthetic data only.** 
+This app does not send emails, call providers, monitor voicemail, scan inboxes, or store case files without your explicit consent and approval at every step.
+        """
+    )
+    
+    st.subheader("Required Consent Checkboxes")
+    st.markdown("**All of the following must be checked before you can generate a LIFT plan:**")
+    
+    col1, col2 = st.columns([0.05, 0.95])
+    with col1:
+        st.write("")
+    with col2:
+        st.session_state["consent_synthetic_data"] = st.checkbox(
+            "☑ I understand this draft uses public or synthetic information only.",
+            value=st.session_state.get("consent_synthetic_data", False),
+            key="consent_synthetic_check"
+        )
+    
+    col1, col2 = st.columns([0.05, 0.95])
+    with col1:
+        st.write("")
+    with col2:
+        st.session_state["consent_no_sensitive_data"] = st.checkbox(
+            "☑ I will not enter private, classified, restricted, protected, or sensitive personal information.",
+            value=st.session_state.get("consent_no_sensitive_data", False),
+            key="consent_no_sensitive_check"
+        )
+    
+    col1, col2 = st.columns([0.05, 0.95])
+    with col1:
+        st.write("")
+    with col2:
+        st.session_state["consent_no_automation"] = st.checkbox(
+            "☑ I understand this app does not send emails, contact providers, scan inboxes, monitor phones, or access voicemail.",
+            value=st.session_state.get("consent_no_automation", False),
+            key="consent_no_automation_check"
+        )
+    
+    col1, col2 = st.columns([0.05, 0.95])
+    with col1:
+        st.write("")
+    with col2:
+        st.session_state["consent_human_approval"] = st.checkbox(
+            "☑ I understand AI-generated outreach must be reviewed and approved by a human before use.",
+            value=st.session_state.get("consent_human_approval", False),
+            key="consent_human_approval_check"
+        )
+    
+    all_consents_checked = (
+        st.session_state.get("consent_synthetic_data", False)
+        and st.session_state.get("consent_no_sensitive_data", False)
+        and st.session_state.get("consent_no_automation", False)
+        and st.session_state.get("consent_human_approval", False)
+    )
+    
+    if not all_consents_checked:
+        st.warning("⚠️ **Please check all required boxes above before generating a LIFT plan.**")
+    
+    st.subheader("Optional Privacy Settings")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state["privacy_session_only"] = st.checkbox(
+            "Use session-only output history (do not save to disk)",
+            value=st.session_state.get("privacy_session_only", False),
+            key="privacy_session_only_check"
+        )
+    
+    with col2:
+        st.session_state["privacy_include_notes"] = st.checkbox(
+            "Include privacy and consent notes in generated plan",
+            value=st.session_state.get("privacy_include_notes", True),
+            key="privacy_include_notes_check"
+        )
+    
+    st.session_state["privacy_allow_website_checks"] = st.checkbox(
+        "Allow basic public provider website checks if available",
+        value=st.session_state.get("privacy_allow_website_checks", True),
+        key="privacy_allow_website_checks_check"
+    )
+    
+    return all_consents_checked
+
+
 def render_privacy_notice():
     st.info(
         "Use public or synthetic information only. Do not enter private, classified, restricted, protected, "
@@ -858,6 +1036,17 @@ def render_privacy_notice():
 
 
 def render_generate_page():
+    st.header("1. Locate the need")
+def render_generate_page():
+    # Show privacy and consent section first
+    all_consents_checked = render_privacy_consent_section()
+    st.divider()
+    
+    # Disable the rest of the form if consents are not checked
+    if not all_consents_checked:
+        st.info("✓ Check all required consent boxes above, then scroll back down to see the full form.")
+        return
+    
     st.header("1. Locate the need")
 
     col_left, col_right = st.columns([2, 1])
@@ -871,6 +1060,8 @@ def render_generate_page():
             ),
             height=140,
         )
+        # Persist the user need in session state for use by other components
+        st.session_state["user_need"] = user_need
 
     with col_right:
         resource_category = st.selectbox(
@@ -1046,22 +1237,41 @@ def render_generate_page():
     if st.session_state.get("final_text"):
         st.divider()
         st.header("LIFT Output")
-
-        trace_col1, trace_col2 = st.columns(2)
-
+        
+        # Agent Decision Trace
+        st.subheader("🤖 Agent Decision Trace")
+        
+        route_trace = st.session_state.get("route_trace", {})
+        
+        trace_col1, trace_col2, trace_col3 = st.columns(3)
         with trace_col1:
-            st.subheader("AI Decision Trace")
-            st.json(st.session_state["route_trace"])
-
+            st.metric("Selected Route", route_trace.get("selected_route", "unknown").replace("_", " ").title())
         with trace_col2:
-            st.subheader("Custom Tool Trace")
-            st.json(st.session_state["tool_trace"])
+            st.metric("Confidence", route_trace.get("confidence", "unknown").upper())
+        with trace_col3:
+            st.metric("Mode", "Live LLM" if "LIVE" in route_trace.get("routing_mode", "") else "Demo")
+        
+        st.markdown(f"**Reason:** {route_trace.get('reason', 'No reason provided')}")
+        
+        if route_trace.get("evidence"):
+            st.markdown("**Evidence:**")
+            for item in route_trace.get("evidence", []):
+                st.markdown(f"- {item}")
+        
+        with st.expander("📋 Full Trace Details", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("AI Routing Decision")
+                st.json(route_trace)
+            with col2:
+                st.subheader("Custom Tool Execution")
+                st.json(st.session_state.get("tool_trace", {}))
 
         st.markdown(st.session_state["final_text"])
 
         tool_result = st.session_state["tool_result"]
 
-        st.subheader("Matched Resources")
+        st.subheader("👥 Matched Resources - Select Providers to Pursue")
         matched_df = pd.DataFrame(tool_result.get("matched_resources", []))
 
         if not matched_df.empty:
@@ -1081,47 +1291,144 @@ def render_generate_page():
             ]
             existing_columns = [col for col in visible_columns if col in matched_df.columns]
             st.dataframe(matched_df[existing_columns], use_container_width=True)
+            
+            # Provider selection
+            st.subheader("Which providers do you want to pursue?")
+            selected_providers = []
+            for idx, row in matched_df.iterrows():
+                if st.checkbox(
+                    f"✓ {row['resource_name']} ({row['category']})",
+                    value=(idx < min(2, len(matched_df))),  # Select first 2 by default
+                    key=f"provider_select_{idx}"
+                ):
+                    selected_providers.append({
+                        "name": row["resource_name"],
+                        "category": row["category"],
+                        "phone": row.get("phone", "N/A"),
+                        "email": row.get("group_email", "N/A"),
+                        "website": row.get("website", "N/A"),
+                        "business_hours": row.get("business_hours", "N/A"),
+                        "eligibility": row.get("eligibility", "N/A"),
+                    })
 
-            if "Map view" in selected_outputs and {"lat", "lon"}.issubset(matched_df.columns):
-                st.subheader("Map View")
-                st.map(matched_df.rename(columns={"lat": "latitude", "lon": "longitude"}))
-
-        st.subheader("Tracker Rows")
+        
+        st.subheader("📋 Follow-Up Tracker")
         tracker_df = pd.DataFrame(tool_result.get("tracker_rows", []))
 
         if not tracker_df.empty:
             st.dataframe(tracker_df, use_container_width=True)
-
             csv_data = tracker_df.to_csv(index=False)
-
             st.download_button(
-                "Download Tracker CSV",
+                "📥 Download Tracker CSV",
                 data=csv_data,
                 file_name=f"lift_tracker_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
 
-        st.subheader("Outreach Draft Approval")
-        st.caption("Draft only. The app does not send this message.")
-        outreach_text = st.text_area(
-            "Review/edit outreach draft",
-            value=tool_result.get("outreach_email_draft", ""),
-            height=260,
-        )
+        # Ensure selected_providers exists
+        try:
+            selected_providers
+        except NameError:
+            selected_providers = []
 
-        st.checkbox(
-            "I reviewed this draft. I understand LIFT does not send outreach automatically.",
-            value=False,
-        )
+        # Generate warm outreach for selected providers
+        if selected_providers:
+            st.subheader("✉️ Warm Outreach Drafts (Per Selected Provider)")
+            st.caption("**IMPORTANT:** These are drafts only. Nothing is sent automatically. Each draft requires human review and approval before use.")
 
-        st.download_button(
-            "Download Outreach Draft",
-            data=outreach_text,
-            file_name=f"lift_outreach_draft_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain",
-            use_container_width=True,
-        )
+            outreach_all = "LIFT AGENT - WARM OUTREACH DRAFTS\n"
+            outreach_all += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            outreach_all += "IMPORTANT: These are drafts only. Nothing is sent automatically.\n"
+            outreach_all += "Each draft requires human review and approval before use.\n\n"
+
+            for p_idx, provider in enumerate(selected_providers):
+                with st.expander(f"📬 {p_idx + 1}. {provider['name']}", expanded=(p_idx == 0)):
+                    st.markdown(f"**Category:** {provider['category']}")
+                    st.markdown(f"**Phone:** {provider['phone']} | **Email:** {provider['email']}")
+                    st.markdown(f"**Hours:** {provider['business_hours']}")
+
+                    # Subject line
+                    subject = st.text_input(
+                        "Email subject line",
+                        value=f"Resource Fit / Eligibility Confirmation - {provider['category']}",
+                        key=f"subj_{p_idx}"
+                    )
+
+                    # Email draft
+                    email_text = st.text_area(
+                        "Email draft",
+                        value=(
+                            "Hello,\n\n"
+                            "I am reaching out to confirm whether your program may be a fit for someone seeking support related to a resource need.\n\n"
+                            "I would appreciate confirmation on:\n"
+                            "1. Whether your program currently provides this type of support\n"
+                            "2. Eligibility requirements (location, age, income, military/veteran status, documents, etc.)\n"
+                            "3. Current hours and whether after-hours or remote options exist\n"
+                            "4. Best intake method (phone, email, website, walk-in, appointment, or referral)\n"
+                            "5. Whether transportation or in-person attendance is required\n\n"
+                            "I am not asking for a referral at this time. I am only trying to verify fit, availability, and next steps.\n\n"
+                            "Thank you for your time."
+                        ),
+                        height=200,
+                        key=f"email_{p_idx}"
+                    )
+
+                    # Call script
+                    call_script = st.text_area(
+                        "Call script",
+                        value=(
+                            f"Hi, is this {provider['name']}? I'm calling to quickly verify a few things:\n\n"
+                            "1. Do you provide [TYPE OF SUPPORT]?\n"
+                            "2. What are the key eligibility requirements?\n"
+                            "3. What are your hours? Do you have after-hours options?\n"
+                            "4. Is it first-come or do we need to call ahead/make an appointment?\n"
+                            "5. What's the best way to get someone started?\n\n"
+                            "Thank you - I'll get back to them with this information."
+                        ),
+                        height=150,
+                        key=f"call_{p_idx}"
+                    )
+
+                    # Confirm before contacting
+                    st.markdown("**Confirm before reaching out to this provider:**")
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.checkbox("Eligibility requirements understood", key=f"conf_elig_{p_idx}")
+                        st.checkbox("Hours confirmed", key=f"conf_hours_{p_idx}")
+                    with col_b:
+                        st.checkbox("Intake process known", key=f"conf_intake_{p_idx}")
+                        st.checkbox("Contact method selected", key=f"conf_contact_{p_idx}")
+
+                    follow_date = st.date_input("Follow-up date", key=f"fup_{p_idx}")
+
+                    # Build export content
+                    outreach_all += f"\n{'='*70}\n"
+                    outreach_all += f"PROVIDER {p_idx + 1}: {provider['name']}\n"
+                    outreach_all += f"{'='*70}\n"
+                    outreach_all += f"Category: {provider['category']}\n"
+                    outreach_all += f"Phone: {provider['phone']}\n"
+                    outreach_all += f"Email: {provider['email']}\n"
+                    outreach_all += f"Website: {provider['website']}\n"
+                    outreach_all += f"Hours: {provider['business_hours']}\n"
+                    outreach_all += f"Eligibility: {provider['eligibility']}\n"
+                    outreach_all += f"Follow-up date: {follow_date}\n\n"
+                    outreach_all += f"SUBJECT: {subject}\n\n"
+                    outreach_all += "--- EMAIL DRAFT ---\n"
+                    outreach_all += email_text + "\n\n"
+                    outreach_all += "--- CALL SCRIPT ---\n"
+                    outreach_all += call_script + "\n"
+
+            # Download all outreach
+            st.download_button(
+                "📄 Download All Outreach Drafts",
+                data=outreach_all,
+                file_name=f"lift_outreach_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        else:
+            st.info("💡 Select providers above to generate warm outreach drafts.")
 
 
 def render_about_page():
@@ -1233,11 +1540,12 @@ The app should avoid relying on one individual point of contact because people r
 
 def main():
     st.set_page_config(page_title=APP_NAME, page_icon="🧭", layout="wide")
+    
+    # Initialize session state
+    init_session_state()
 
     st.title(APP_NAME)
     st.caption(f"{APP_TAGLINE} | {APP_SUBTITLE}")
-
-    render_privacy_notice()
 
     page = st.sidebar.radio("Navigation", ["Generate LIFT Plan", "Validation Notes", "About"])
 
