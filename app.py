@@ -23,6 +23,178 @@ APP_SUBTITLE = "Provider matching, warm outreach drafting, basic provider checks
 
 DEFAULT_MODEL = os.getenv("P3_DEFAULT_MODEL", "gpt-4o-mini")
 
+# Supported languages
+SUPPORTED_LANGUAGES = [
+    "English",
+    "Spanish",
+    "French",
+    "Arabic",
+    "Bengali / Bangla",
+    "Swahili",
+    "Kinyarwanda",
+    "Nepali",
+    "Vietnamese",
+    "Burmese",
+    "Karen",
+    "Somali",
+    "Haitian Creole",
+    "Farsi",
+    "Mandarin",
+    "Hindi",
+    "Telugu",
+    "Other / Interpreter needed",
+]
+
+# Translation dictionary for core interface labels
+TRANSLATIONS = {
+    "English": {
+        "Generate LIFT Plan": "Generate LIFT Plan",
+        "Privacy, Consent, and User Control": "Privacy, Consent, and User Control",
+        "Optional Context": "Optional Context",
+        "Select only what you are comfortable sharing. This helps match better resources.": "Select only what you are comfortable sharing. This helps match better resources.",
+        "Language / Idioma": "Language / Idioma",
+        "Language access needed": "Language access needed",
+        "No preference": "No preference",
+        "Resource category": "Resource category",
+        "Urgency": "Urgency",
+        "Primary search location": "Primary search location",
+        "Additional locations": "Additional locations",
+        "Search radius in miles": "Search radius in miles",
+        "Immediate / 24-7 Support Options": "Immediate / 24-7 Support Options",
+        "Free or No-Cost Options": "Free or No-Cost Options",
+        "After-Hours / Evening / Weekend Options": "After-Hours / Evening / Weekend Options",
+        "Regular Business Hours Providers": "Regular Business Hours Providers",
+        "Appointment-Only or Unknown Hours": "Appointment-Only or Unknown Hours",
+        "Backup / Contingency Options": "Backup / Contingency Options",
+        "Agent Decision Trace": "Agent Decision Trace",
+        "Basic Provider Check": "Basic Provider Check",
+        "Warm Outreach Draft": "Warm Outreach Draft",
+        "Follow-up Tracker": "Follow-up Tracker",
+        "Human approval required": "Human approval required",
+        "No emails are sent automatically": "No emails are sent automatically",
+        "Hours unknown": "Hours unknown",
+        "Cost unknown": "Cost unknown",
+        "Requirements unknown": "Requirements unknown",
+        "Application required": "Application required",
+        "Appointment needed": "Appointment needed",
+        "Free": "Free",
+        "Low-cost": "Low-cost",
+        "Interpreter needed": "Interpreter needed",
+        "Translation is AI-assisted. Please confirm important details directly with the provider.": "Translation is AI-assisted. Please confirm important details directly with the provider.",
+    },
+    "Spanish": {
+        "Generate LIFT Plan": "Generar Plan LIFT",
+        "Privacy, Consent, and User Control": "Privacidad, Consentimiento y Control del Usuario",
+        "Optional Context": "Contexto Opcional",
+        "Select only what you are comfortable sharing. This helps match better resources.": "Selecciona solo lo que te sientas cómodo compartiendo. Esto ayuda a encontrar mejores recursos.",
+        "Language / Idioma": "Idioma",
+        "Language access needed": "Idioma necesario",
+        "No preference": "Sin preferencia",
+        "Resource category": "Categoría de recurso",
+        "Urgency": "Urgencia",
+        "Primary search location": "Ubicación de búsqueda principal",
+        "Additional locations": "Ubicaciones adicionales",
+        "Search radius in miles": "Radio de búsqueda en millas",
+        "Immediate / 24-7 Support Options": "Opciones de Apoyo Inmediato / 24-7",
+        "Free or No-Cost Options": "Opciones Gratuitas o sin Costo",
+        "After-Hours / Evening / Weekend Options": "Opciones Después de Horas / Noche / Fin de Semana",
+        "Regular Business Hours Providers": "Proveedores de Horario Comercial Regular",
+        "Appointment-Only or Unknown Hours": "Solo Cita Previa u Horas Desconocidas",
+        "Backup / Contingency Options": "Opciones de Respaldo / Contingencia",
+        "Agent Decision Trace": "Trazabilidad de Decisión del Agente",
+        "Basic Provider Check": "Verificación Básica del Proveedor",
+        "Warm Outreach Draft": "Borrador de Comunicación Cálida",
+        "Follow-up Tracker": "Rastreador de Seguimiento",
+        "Human approval required": "Se requiere aprobación humana",
+        "No emails are sent automatically": "No se envían correos automáticamente",
+        "Hours unknown": "Horario desconocido",
+        "Cost unknown": "Costo desconocido",
+        "Requirements unknown": "Requisitos desconocidos",
+        "Application required": "Solicitud requerida",
+        "Appointment needed": "Cita necesaria",
+        "Free": "Gratis",
+        "Low-cost": "Bajo costo",
+        "Interpreter needed": "Se necesita intérprete",
+        "Translation is AI-assisted. Please confirm important details directly with the provider.": "La traducción es asistida por IA. Por favor, confirma detalles importantes directamente con el proveedor.",
+    },
+    "French": {
+        "Generate LIFT Plan": "Générer le Plan LIFT",
+        "Privacy, Consent, and User Control": "Confidentialité, Consentement et Contrôle de l'Utilisateur",
+        "Optional Context": "Contexte Facultatif",
+        "Language / Idioma": "Langue",
+        "Language access needed": "Accès linguistique nécessaire",
+        "Resource category": "Catégorie de ressource",
+        "Hours unknown": "Heures inconnues",
+        "Cost unknown": "Coût inconnu",
+        "Free": "Gratuit",
+    },
+    "Arabic": {
+        "Generate LIFT Plan": "إنشاء خطة LIFT",
+        "Privacy, Consent, and User Control": "الخصوصية والموافقة والتحكم من قبل المستخدم",
+        "Optional Context": "سياق اختياري",
+        "Language / Idioma": "اللغة",
+        "Language access needed": "الحاجة إلى الوصول اللغوي",
+        "Hours unknown": "ساعات غير معروفة",
+        "Free": "مجاني",
+    },
+    "Bengali / Bangla": {
+        "Generate LIFT Plan": "LIFT প্ল্যান তৈরি করুন",
+        "Language / Idioma": "ভাষা",
+        "Language access needed": "ভাষা অ্যাক্সেসের প্রয়োজন",
+        "Hours unknown": "ঘন্টা অজানা",
+        "Free": "বিনামূল্যে",
+    },
+    "Swahili": {
+        "Generate LIFT Plan": "Tengeneza Mpango wa LIFT",
+        "Language / Idioma": "Lugha",
+        "Language access needed": "Mahitaji ya Kufikia Lugha",
+        "Hours unknown": "Saa Haijulikani",
+        "Free": "Bure",
+    },
+    "Hindi": {
+        "Generate LIFT Plan": "LIFT योजना बनाएं",
+        "Language / Idioma": "भाषा",
+        "Language access needed": "भाषा पहुंच की आवश्यकता",
+        "Hours unknown": "घंटे अज्ञात",
+        "Free": "मुफ़्त",
+    },
+    "Telugu": {
+        "Generate LIFT Plan": "LIFT ప్ల్యాన్‌ను సృష్టించండి",
+        "Language / Idioma": "భాష",
+        "Language access needed": "భాష ప్రాప్యత అవసరం",
+        "Hours unknown": "సమయాలు తెలియవు",
+        "Free": "ఉచితం",
+    },
+}
+
+
+def get_text(key, language="English"):
+    """Get translated text or fallback to English if not available."""
+    if language not in TRANSLATIONS:
+        language = "English"
+    return TRANSLATIONS.get(language, TRANSLATIONS["English"]).get(key, key)
+
+
+def current_language():
+    """Return the selected display language from Streamlit session state."""
+    return st.session_state.get("language", "English")
+
+
+def t(key):
+    """Short translation helper for Streamlit labels."""
+    return get_text(key, current_language())
+
+
+def translation_safety_note():
+    """Show translation limitation when the user selects a non-English language."""
+    if current_language() != "English":
+        st.info(
+            get_text(
+                "Translation is AI-assisted. Please confirm important details directly with the provider.",
+                current_language(),
+            )
+        )
+
 
 ROUTES = [
     "resource_match",
@@ -949,8 +1121,10 @@ def run_live_llm_tool_workflow(
         else:
             raise RuntimeError(f"Unexpected tool requested: {tool_call.function.name}")
 
-    final_instruction = """
+    final_instruction = f"""
 Write a concise structured report using the tool result.
+Use this display language when possible: {context.get("display_language", "English")}.
+If language access was requested, mention that provider language support must be confirmed: {context.get("language_access_needed", "No preference")}.
 Include:
 1. Best-fit resource summary
 2. Main access/eligibility gaps
@@ -1043,11 +1217,17 @@ def init_session_state():
         st.session_state["privacy_include_notes"] = True
     if "privacy_allow_website_checks" not in st.session_state:
         st.session_state["privacy_allow_website_checks"] = True
+    if "language" not in st.session_state:
+        st.session_state["language"] = "English"
+    if "language_access_needed" not in st.session_state:
+        st.session_state["language_access_needed"] = "No preference"
+    if "optional_context" not in st.session_state:
+        st.session_state["optional_context"] = []
 
 
 def render_privacy_consent_section():
     """Render the Privacy, Consent, and User Control section."""
-    st.header("Privacy, Consent, and User Control")
+    st.header(t("Privacy, Consent, and User Control"))
     
     st.markdown(
         """
@@ -1143,9 +1323,10 @@ def render_privacy_notice():
 
 
 def render_generate_page():
-    st.header("1. Locate the need")
-def render_generate_page():
     # Show privacy and consent section first
+    language = current_language()
+    language_access_needed = st.session_state.get("language_access_needed", "No preference")
+
     all_consents_checked = render_privacy_consent_section()
     st.divider()
     
@@ -1155,6 +1336,7 @@ def render_generate_page():
         return
     
     st.header("1. Locate the need")
+    st.caption(f"Display language: {language} | Service language need: {language_access_needed}")
 
     col_left, col_right = st.columns([2, 1])
 
@@ -1172,7 +1354,7 @@ def render_generate_page():
 
     with col_right:
         resource_category = st.selectbox(
-            "Resource category",
+            get_text("Resource category", language),
             [
                 "Any / Not Sure",
                 "Food / Basic Needs",
@@ -1188,23 +1370,23 @@ def render_generate_page():
             ],
         )
 
-        urgency = st.selectbox("Urgency", ["Routine", "Soon", "Urgent", "Crisis / immediate"])
+        urgency = st.selectbox(get_text("Urgency", language), ["Routine", "Soon", "Urgent", "Crisis / immediate"])
 
     st.header("2. Identify location and access limits")
 
     loc_col1, loc_col2, loc_col3 = st.columns(3)
 
     with loc_col1:
-        primary_location = st.text_input("Primary search location", value="Grand Rapids, MI")
+        primary_location = st.text_input(get_text("Primary search location", language), value="Grand Rapids, MI")
 
     with loc_col2:
         additional_locations_text = st.text_input(
-            "Additional locations",
+            get_text("Additional locations", language),
             placeholder="Walker, MI; Kentwood, MI; Wyoming, MI",
         )
 
     with loc_col3:
-        radius_miles = st.slider("Search radius in miles", 5, 100, 25, step=5)
+        radius_miles = st.slider(get_text("Search radius in miles", language), 5, 100, 25, step=5)
 
     additional_locations = [
         item.strip()
@@ -1245,10 +1427,13 @@ def render_generate_page():
         "needs_24_7": needs_24_7,
         "documents_available": documents_available,
         "urgency": urgency,
+        "display_language": language,
+        "language_access_needed": language_access_needed,
     }
 
     # Optional Context (select only what you're comfortable sharing)
-    st.header("Optional Context")
+    st.header(get_text("Optional Context", language))
+    st.caption(get_text("Select only what you are comfortable sharing. This helps match better resources.", language))
     optional_labels = [
         "Veteran",
         "Disabled Veteran",
@@ -1286,6 +1471,7 @@ def render_generate_page():
             selected_optional.append(label)
 
     st.session_state["optional_context"] = selected_optional
+    context["optional_context"] = selected_optional
 
     st.header("4. Follow-up outputs")
 
@@ -1321,7 +1507,7 @@ def render_generate_page():
             "Demo Mode is interactive, but it is not a live LLM decision."
         )
 
-    generate = st.button("Generate LIFT Plan", type="primary", use_container_width=True)
+    generate = st.button(get_text("Generate LIFT Plan", language), type="primary", use_container_width=True)
 
     if generate:
         if not user_need.strip():
@@ -1384,9 +1570,10 @@ def render_generate_page():
     if st.session_state.get("final_text"):
         st.divider()
         st.header("LIFT Output")
+        translation_safety_note()
         
         # Agent Decision Trace
-        st.subheader("🤖 Agent Decision Trace")
+        st.subheader(f"🤖 {get_text('Agent Decision Trace', language)}")
         
         route_trace = st.session_state.get("route_trace", {})
         
@@ -1456,6 +1643,7 @@ def render_generate_page():
                         "website": row.get("website", "N/A"),
                         "business_hours": row.get("business_hours", "N/A"),
                         "eligibility": row.get("eligibility", "N/A"),
+                        "city": row.get("city", "N/A"),
                     })
 
         
@@ -1478,6 +1666,42 @@ def render_generate_page():
             selected_providers
         except NameError:
             selected_providers = []
+
+        # Basic provider checks for selected providers
+        provider_checks = []
+        if selected_providers:
+            st.subheader(f"🔎 {get_text('Basic Provider Check', language)}")
+            st.caption(
+                "This is a basic synthetic/demo provider check. It is not full real-world verification. "
+                "Confirm details directly with the provider before relying on them."
+            )
+
+            for c_idx, provider in enumerate(selected_providers):
+                check = mcp_basic_provider_check(
+                    provider_name=provider.get("name", ""),
+                    website_url=provider.get("website", ""),
+                    category=provider.get("category", ""),
+                    location=provider.get("city", ""),
+                    user_need=st.session_state.get("user_need", ""),
+                )
+                provider_checks.append(check)
+
+                with st.expander(f"{provider.get('name', 'Provider')} - basic check", expanded=False):
+                    st.write(f"**Website status:** {check.get('website_status', 'unknown')}")
+                    st.write(f"**Confidence:** {check.get('confidence', 'unknown')}")
+                    st.write(f"**Basic contact found:** {check.get('basic_contact_found', 'unknown')}")
+                    st.write(f"**Hours:** {check.get('hours_label', get_text('Hours unknown', language))}")
+                    st.write(f"**Cost:** {check.get('cost_label', get_text('Cost unknown', language))}")
+                    st.write(f"**Application required:** {check.get('application_required', 'unknown')}")
+                    st.write(f"**Appointment required:** {check.get('appointment_required', 'unknown')}")
+                    st.write(f"**Documents needed:** {check.get('documents_needed', 'unknown')}")
+                    st.write(f"**Checked at:** {check.get('checked_at', 'unknown')}")
+                    st.write(f"**Notes:** {check.get('notes', '')}")
+
+            st.session_state["provider_checks"] = provider_checks
+
+            with st.expander("Agent Decision Trace - selected provider checks", expanded=False):
+                st.json(provider_checks)
 
         # Generate warm outreach for selected providers
         if selected_providers:
@@ -1513,7 +1737,8 @@ def render_generate_page():
                             "2. Eligibility requirements (location, age, income, military/veteran status, documents, etc.)\n"
                             "3. Current hours and whether after-hours or remote options exist\n"
                             "4. Best intake method (phone, email, website, walk-in, appointment, or referral)\n"
-                            "5. Whether transportation or in-person attendance is required\n\n"
+                            "5. Whether transportation or in-person attendance is required\n"
+                            f"6. Whether {language_access_needed} language support or interpreter support is available\n\n"
                             "I am not asking for a referral at this time. I am only trying to verify fit, availability, and next steps.\n\n"
                             "Thank you for your time."
                         ),
@@ -1530,7 +1755,8 @@ def render_generate_page():
                             "2. What are the key eligibility requirements?\n"
                             "3. What are your hours? Do you have after-hours options?\n"
                             "4. Is it first-come or do we need to call ahead/make an appointment?\n"
-                            "5. What's the best way to get someone started?\n\n"
+                            "5. What's the best way to get someone started?\n"
+                            f"6. Do you have {language_access_needed} language support or interpreter access?\n\n"
                             "Thank you - I'll get back to them with this information."
                         ),
                         height=150,
@@ -1619,26 +1845,25 @@ Future versions could add consent-based integrations, login, role-based access, 
 
     st.subheader("Project 3 Agentic Workflow")
 
-    st.graphviz_chart(
-        """
-        digraph {
-            rankdir=LR;
+    workflow_steps = [
+        ("1", "User Need", "The user enters a resource need, location, and context."),
+        ("2", "LLM Route Decision", "The model selects the next workflow route when the API key is available."),
+        ("3", "Custom Tool Call", "The app calls the custom LIFT tool for resource fit and gap review."),
+        ("4", "Resource Fit + Gap Analysis", "The tool reviews matches, barriers, eligibility, hours, and access issues."),
+        ("5", "Outreach + Tracker", "The app drafts outreach and creates follow-up tracker rows."),
+        ("6", "User Approval Layer", "The user reviews everything before using any outreach."),
+    ]
 
-            intake [label="User need + location + context"];
-            router [label="LLM route decision"];
-            tool [label="Custom tool call"];
-            analysis [label="Resource fit + gap analysis"];
-            outputs [label="Outreach draft + tracker + gap notes"];
-            approval [label="User approval layer"];
-
-            intake -> router;
-            router -> tool;
-            tool -> analysis;
-            analysis -> outputs;
-            outputs -> approval;
-        }
-        """
-    )
+    for number, title, description in workflow_steps:
+        st.markdown(
+            f"""
+            <div style="border:1px solid #999; border-radius:10px; padding:14px; margin-bottom:10px;">
+                <h4 style="margin:0;">{number}. {title}</h4>
+                <p style="margin:6px 0 0 0; font-size:16px;">{description}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_monitoring_page():
