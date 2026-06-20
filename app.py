@@ -11,6 +11,8 @@ from urllib.request import Request, urlopen
 import pandas as pd
 import streamlit as st
 
+import ui_components as ui
+
 try:
     from openai import OpenAI
 
@@ -286,6 +288,13 @@ def get_openai_api_key():
 
 
 def get_openai_client():
+    st.divider()
+    all_consents_checked = render_privacy_consent_section()
+    st.divider()
+
+    if not all_consents_checked:
+        st.info("Check all required consent boxes above to enable the Generate button.")
+
     api_key = get_openai_api_key()
 
     if not OPENAI_AVAILABLE:
@@ -1540,18 +1549,11 @@ def render_privacy_notice():
 
 
 def render_generate_page():
-    # Show privacy and consent section first
     language = current_language()
     language_access_needed = st.session_state.get("language_access_needed", "No preference")
 
-    all_consents_checked = render_privacy_consent_section()
-    st.divider()
-    
-    # Disable the rest of the form if consents are not checked
-    if not all_consents_checked:
-        st.info("✓ Check all required consent boxes above, then scroll back down to see the full form.")
-        return
-    
+    ui.render_soft_intro_card()
+
     st.header("1. Locate the need")
     st.caption(f"Display language: {language} | Service language need: {language_access_needed}")
 
@@ -1649,43 +1651,43 @@ def render_generate_page():
     }
 
     # Optional Context (select only what you're comfortable sharing)
-    st.header(get_text("Optional Context", language))
-    st.caption(get_text("Select only what you are comfortable sharing. This helps match better resources.", language))
-    optional_labels = [
-        "Veteran",
-        "Disabled Veteran",
-        "Military family",
-        "Single parent",
-        "Parent/caregiver",
-        "Pregnant/postpartum",
-        "Student",
-        "Senior",
-        "Youth/young adult",
-        "Housing unstable",
-        "No transportation",
-        "Low/no income",
-        "Uninsured",
-        "Food insecure",
-        "Domestic Violence survivor",
-        "Sexual assault survivor",
-        "Mental health support",
-        "Recovery support",
-        "Legal help",
-        "Reentry support",
-        "Immigration help",
-        "Spanish services",
-        "LGBTQIA+ affirming",
-        "Disability resources",
-        "Pet-friendly help",
-        "After-hours services",
-    ]
+    with st.expander(get_text("Optional Context", language), expanded=False):
+        st.caption(get_text("Select only what you are comfortable sharing. This helps match better resources.", language))
+        optional_labels = [
+            "Veteran",
+            "Disabled Veteran",
+            "Military family",
+            "Single parent",
+            "Parent/caregiver",
+            "Pregnant/postpartum",
+            "Student",
+            "Senior",
+            "Youth/young adult",
+            "Housing unstable",
+            "No transportation",
+            "Low/no income",
+            "Uninsured",
+            "Food insecure",
+            "Domestic Violence survivor",
+            "Sexual assault survivor",
+            "Mental health support",
+            "Recovery support",
+            "Legal help",
+            "Reentry support",
+            "Immigration help",
+            "Spanish services",
+            "LGBTQIA+ affirming",
+            "Disability resources",
+            "Pet-friendly help",
+            "After-hours services",
+        ]
 
-    selected_optional = []
-    cols = st.columns(3)
-    for i, label in enumerate(optional_labels):
-        col = cols[i % 3]
-        if col.checkbox(label, key=f"optctx_{i}"):
-            selected_optional.append(label)
+        selected_optional = []
+        cols = st.columns(3)
+        for i, label in enumerate(optional_labels):
+            col = cols[i % 3]
+            if col.checkbox(label, key=f"optctx_{i}"):
+                selected_optional.append(label)
 
     st.session_state["optional_context"] = selected_optional
     context["optional_context"] = selected_optional
@@ -1724,7 +1726,12 @@ def render_generate_page():
             "Demo Mode is interactive, but it is not a live LLM decision."
         )
 
-    generate = st.button(get_text("Generate LIFT Plan", language), type="primary", use_container_width=True)
+    generate = st.button(
+        get_text("Generate LIFT Plan", language),
+        type="primary",
+        use_container_width=True,
+        disabled=not all_consents_checked,
+    )
 
     if generate:
         if not user_need.strip():
@@ -1840,6 +1847,8 @@ def render_generate_page():
 
         tool_result = st.session_state["tool_result"]
 
+        ui.render_result_cards_from_tool_result(tool_result)
+
         st.subheader("👥 Matched Resources - Select Providers to Pursue")
         matched_df = pd.DataFrame(tool_result.get("matched_resources", []))
 
@@ -1903,40 +1912,57 @@ def render_generate_page():
             selected_providers = []
 
         # Basic provider checks for selected providers
-        provider_checks = []
         if selected_providers:
             st.subheader(f"🔎 {get_text('Basic Provider Check', language)}")
             st.caption(
                 "This is a basic public HTTP provider check when a website URL is available. It is not full real-world verification. "
-                "Confirm details directly with the provider before relying on them."
+                "Confirm details directly with the provider before relying on them. Nothing is contacted automatically."
             )
 
-            for c_idx, provider in enumerate(selected_providers):
-                check = mcp_basic_provider_check(
-                    provider_name=provider.get("name", ""),
-                    website_url=provider.get("website", ""),
-                    category=provider.get("category", ""),
-                    location=provider.get("city", ""),
-                    user_need=st.session_state.get("user_need", ""),
-                )
-                provider_checks.append(check)
+            existing_provider_checks = st.session_state.get("provider_checks", [])
+            if existing_provider_checks:
+                with st.expander("Previous selected provider checks", expanded=False):
+                    st.json(existing_provider_checks)
 
-                with st.expander(f"{provider.get('name', 'Provider')} - basic check", expanded=False):
-                    st.write(f"**Website status:** {check.get('website_status', 'unknown')}")
-                    st.write(f"**Confidence:** {check.get('confidence', 'unknown')}")
-                    st.write(f"**Basic contact found:** {check.get('basic_contact_found', 'unknown')}")
-                    st.write(f"**Hours:** {check.get('hours_label', get_text('Hours unknown', language))}")
-                    st.write(f"**Cost:** {check.get('cost_label', get_text('Cost unknown', language))}")
-                    st.write(f"**Application required:** {check.get('application_required', 'unknown')}")
-                    st.write(f"**Appointment required:** {check.get('appointment_required', 'unknown')}")
-                    st.write(f"**Documents needed:** {check.get('documents_needed', 'unknown')}")
-                    st.write(f"**Checked at:** {check.get('checked_at', 'unknown')}")
-                    st.write(f"**Notes:** {check.get('notes', '')}")
+            run_provider_checks = st.button(
+                "Run selected provider checks",
+                key="run_selected_provider_checks",
+                type="secondary",
+                use_container_width=True,
+            )
 
-            st.session_state["provider_checks"] = provider_checks
+            if run_provider_checks:
+                provider_checks = []
 
-            with st.expander("Agent Decision Trace - selected provider checks", expanded=False):
-                st.json(provider_checks)
+                with st.spinner("Checking selected provider websites..."):
+                    for c_idx, provider in enumerate(selected_providers):
+                        check = mcp_basic_provider_check(
+                            provider_name=provider.get("name", ""),
+                            website_url=provider.get("website", ""),
+                            category=provider.get("category", ""),
+                            location=provider.get("city", ""),
+                            user_need=st.session_state.get("user_need", ""),
+                        )
+                        provider_checks.append(check)
+
+                st.session_state["provider_checks"] = provider_checks
+
+                for c_idx, check in enumerate(provider_checks):
+                    provider_name = check.get("provider_name", f"Provider {c_idx + 1}")
+                    with st.expander(f"{provider_name} - basic check", expanded=False):
+                        st.write(f"**Website status:** {check.get('website_status', 'unknown')}")
+                        st.write(f"**Confidence:** {check.get('confidence', 'unknown')}")
+                        st.write(f"**Basic contact found:** {check.get('basic_contact_found', 'unknown')}")
+                        st.write(f"**Hours:** {check.get('hours_label', get_text('Hours unknown', language))}")
+                        st.write(f"**Cost:** {check.get('cost_label', get_text('Cost unknown', language))}")
+                        st.write(f"**Application required:** {check.get('application_required', 'unknown')}")
+                        st.write(f"**Appointment required:** {check.get('appointment_required', 'unknown')}")
+                        st.write(f"**Documents needed:** {check.get('documents_needed', 'unknown')}")
+                        st.write(f"**Checked at:** {check.get('checked_at', 'unknown')}")
+                        st.write(f"**Notes:** {check.get('notes', '')}")
+
+                with st.expander("Agent Decision Trace - selected provider checks", expanded=False):
+                    st.json(provider_checks)
 
         # Generate warm outreach for selected providers
         if selected_providers:
@@ -2146,22 +2172,36 @@ The app should avoid relying on one individual point of contact because people r
 
 
 def main():
-    st.set_page_config(page_title=APP_NAME, page_icon="🧭", layout="wide")
-    
+    st.set_page_config(page_title=APP_NAME, page_icon="✨", layout="wide")
+
     # Initialize session state
     init_session_state()
 
-    st.title(APP_NAME)
-    st.caption(f"{APP_TAGLINE} | {APP_SUBTITLE}")
+    # Visual redesign and optional advanced sidebar
+    ui.inject_global_styles()
+    ui.render_advanced_sidebar(
+        supported_languages=SUPPORTED_LANGUAGES,
+        openai_available=OPENAI_AVAILABLE,
+        api_key_present=bool(get_openai_api_key()),
+    )
 
-    page = st.sidebar.radio("Navigation", ["Generate LIFT Plan", "Validation Notes", "About"])
+    # Main, always-rendered, single scrolling page
+    ui.render_brand_header(app_name=APP_NAME, author_line="from Britney Katherine Lindsey")
+    ui.render_hover_animation()
+    ui.render_scroll_cta(target_anchor_id="lift-explainer-section", label="Let’s LIFT You Up")
 
-    if page == "Generate LIFT Plan":
-        render_generate_page()
-    elif page == "Validation Notes":
-        render_monitoring_page()
-    else:
+    ui.render_anchor("lift-explainer-section")
+    ui.render_lift_explainer()
+
+    ui.render_anchor("lift-form-section")
+    render_generate_page()
+
+    st.divider()
+    with st.expander("About LIFT Agent", expanded=False):
         render_about_page()
+
+    with st.expander("Validation / Monitoring Notes", expanded=False):
+        render_monitoring_page()
 
 
 if __name__ == "__main__":
