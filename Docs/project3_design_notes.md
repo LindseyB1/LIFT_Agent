@@ -2,22 +2,14 @@
 
 ## Problem
 
-Replace this with the final user problem.
-
-Good format:
-This app helps [user type] do [task] by using [AI workflow/tool] to produce [specific output].
+People who are trying to find community support often get stuck with scattered provider information, unclear eligibility rules, limited hours, transportation barriers, and outdated contact details. LIFT Agent helps turn a resource need into a structured provider search, gap review, outreach draft, and follow-up tracker while keeping human approval in control.
 
 ## Target User
 
-Replace this with the final target user.
-
-Examples:
-- Student
-- Analyst
-- Small business owner
-- Emergency management user
-- Cybersecurity learner
 - Community resource coordinator
+- Student support staff member
+- Military family readiness or veteran support volunteer
+- Case-navigation learner practicing responsible AI workflows
 
 ## Lessons From Project 1
 
@@ -37,4 +29,4 @@ Examples:
 
 ## Project 3 Improvement
 
-Project 3 adds an LLM routing decision before generation and records the route, model selected, tool call, and evaluation result.
+Project 3 adds an LLM routing decision before generation, a real external public resource search, a model-callable gap-analysis tool, a basic public provider website check, and visible trace records that show route selection, tool execution, and grounding source.

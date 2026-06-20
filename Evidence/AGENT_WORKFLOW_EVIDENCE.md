@@ -266,7 +266,7 @@ Uses **real public HTTP requests** when a provider URL is available:
 LIFT stores all workflow state in Streamlit session:
 
 ```python
-st.session_state["consent_synthetic_data"]  # User acknowledged synthetic data
+st.session_state["consent_synthetic_data"]  # User acknowledged public external data or labeled fallback data
 st.session_state["consent_no_sensitive_data"]  # User confirmed no sensitive data
 st.session_state["consent_no_automation"]  # User understood no auto-sending
 st.session_state["consent_human_approval"]  # User understood manual approval
@@ -290,7 +290,7 @@ st.session_state["generated_at"]  # Timestamp
 - Demo mode works without API key: Yes
 
 ### ✅ App works even if no API key is present
-- Uses demo output: Yes
+- Uses labeled local routing fallback if no OpenAI API key is present: Yes
 - Shows labeled "DEMO FALLBACK": Yes
 - Still generates resources, outreach, tracker: Yes
 
@@ -343,9 +343,9 @@ st.session_state["generated_at"]  # Timestamp
 
 ### Current Limitations
 
-1. **No real web scraping** – MCP tool uses demo data
+1. **No real web scraping** – MCP-style provider check uses public HTTP requests but does not execute JavaScript, log in, or submit forms
 2. **No email sending** – User must manually send
-3. **No provider database sync** – All data is synthetic
+3. **No provider database sync** – Public search results are not a formal 211-style human-services directory
 4. **No authentication** – Anyone can access
 5. **No audit logging** – No compliance records
 
@@ -368,9 +368,10 @@ LIFT Agent successfully demonstrates:
 ✅ **Real agentic workflow** – Not just text generation  
 ✅ **Model-callable tools** – Real function calls via OpenAI tools API  
 ✅ **Human approval layers** – Consent + provider selection + review  
-✅ **Honest about limitations** – Synthetic data, no auto-sending, demo mode when no API key  
+✅ **Honest about limitations** – Public search data requires verification, no auto-sending, demo routing mode when no API key  
 ✅ **Clear routing logic** – AI explains its decision  
 ✅ **MCP-style structure** – Tool input/output documented  
 ✅ **Privacy-first design** – Consent up front, session-only option  
 
 This is a draft tool that teaches AI responsible development.
+
