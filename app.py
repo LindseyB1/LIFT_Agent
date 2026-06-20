@@ -1,7 +1,12 @@
 import json
 import math
 import os
+import socket
+import time
 from datetime import datetime
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import pandas as pd
 import streamlit as st
@@ -19,9 +24,11 @@ except Exception as error:
 
 APP_NAME = "LIFT Agent"
 APP_TAGLINE = "Locate. Identify. Follow-up. Track."
-APP_SUBTITLE = "Provider matching, warm outreach drafting, basic provider checks, and follow-up tracking using synthetic data."
+APP_SUBTITLE = "Provider matching, warm outreach drafting, basic provider checks, and follow-up tracking grounded in public external search results."
 
 DEFAULT_MODEL = os.getenv("P3_DEFAULT_MODEL", "gpt-4o-mini")
+PUBLIC_RESOURCE_SEARCH_API = "https://nominatim.openstreetmap.org/search"
+HTTP_TIMEOUT_SECONDS = 8
 
 # Supported languages
 SUPPORTED_LANGUAGES = [
@@ -213,7 +220,7 @@ ANALYZE_RESOURCE_GAP_TOOL = {
     "function": {
         "name": "analyze_resource_gaps_and_build_contingency_plan",
         "description": (
-            "Analyze a user's resource need, location/radius, eligibility context, and synthetic resource data. "
+            "Analyze a user's resource need, location/radius, eligibility context, and external public resource search data. "
             "Return matched resources, access gaps, eligibility barriers, contingency options, outreach draft, "
             "tracker rows, and system gap notes."
         ),
@@ -249,7 +256,7 @@ MCP_BASIC_PROVIDER_CHECK_TOOL = {
         "name": "mcp_basic_provider_check",
         "description": (
             "Basic provider information check (MCP-style). Returns website status, contact presence, hours, cost, "
-            "appointment/application requirements, documents needed, confidence, notes, and limitations. Uses demo/synthetic data when live checks are not available."
+            "appointment/application requirements, documents needed, confidence, notes, and limitations. Uses a basic public HTTP request when a website URL is available."
         ),
         "parameters": {
             "type": "object",
@@ -301,6 +308,177 @@ def parse_json_safely(text):
         return json.loads(cleaned)
     except Exception:
         return {}
+
+
+def get_public_api_user_agent():
+    contact = os.getenv("LIFT_CONTACT_EMAIL", "https://github.com/LindseyB1/LIFT_Agent")
+    return f"LIFT-Agent-Project3/1.0 ({contact})"
+
+
+def infer_city_state(address):
+    city = (
+        address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or address.get("municipality")
+        or address.get("county")
+        or "Unknown"
+    )
+    state = address.get("state") or address.get("ISO3166-2-lvl4", "").split("-")[-1] or ""
+    return city, state
+
+
+def category_to_search_terms(resource_category, user_need):
+    category_terms = {
+        "Any / Not Sure": ["community resource", "social services", "211"],
+        "Food / Basic Needs": ["food pantry", "food bank", "community food"],
+        "Housing / Utilities": ["housing assistance", "homeless services", "utility assistance"],
+        "Financial Assistance": ["financial assistance", "community action agency"],
+        "Transportation": ["public transportation", "transportation assistance"],
+        "Legal / Administrative": ["legal aid", "legal services"],
+        "Behavioral Health": ["behavioral health", "mental health clinic"],
+        "Emergency / 24-7 Crisis": ["crisis center", "emergency assistance", "988"],
+        "Veteran / Service Member Support": ["veterans services", "veterans affairs"],
+        "Family Readiness / FRG": ["family readiness", "military family support"],
+        "General Support / 24-7 Navigation": ["211", "community resource navigation"],
+    }
+
+    terms = category_terms.get(resource_category, ["community resource"])
+    if resource_category == "Any / Not Sure" and user_need:
+        need_words = " ".join(str(user_need or "").split()[:8])
+        return [need_words] + terms
+    return terms
+
+
+def normalize_nominatim_place(place, resource_category):
+    address = place.get("address") or {}
+    extra = place.get("extratags") or {}
+    namedetails = place.get("namedetails") or {}
+    city, state = infer_city_state(address)
+
+    phone = extra.get("phone") or extra.get("contact:phone") or ""
+    email = extra.get("email") or extra.get("contact:email") or ""
+    website = extra.get("website") or extra.get("contact:website") or ""
+    opening_hours = extra.get("opening_hours") or "Hours not returned by OSM"
+    name = (
+        namedetails.get("name")
+        or place.get("name")
+        or place.get("display_name", "").split(",")[0]
+        or "Unnamed public search result"
+    )
+
+    return {
+        "resource_name": name,
+        "category": resource_category,
+        "city": city,
+        "state": state,
+        "lat": float(place["lat"]),
+        "lon": float(place["lon"]),
+        "area_served": place.get("display_name", ""),
+        "available_24_7": "Unknown",
+        "business_hours": opening_hours,
+        "phone": phone or "Not returned by API",
+        "group_email": email or "Not returned by API",
+        "website": website or "Not returned by API",
+        "eligibility": "Not returned by public place-search API; confirm directly with provider.",
+        "transportation_required": "Unknown",
+        "remote_option": "Unknown",
+        "last_verified_date": datetime.now().strftime("%Y-%m-%d"),
+        "verification_method": "OpenStreetMap Nominatim public API search result",
+        "status": "External API result - needs direct provider verification",
+        "notes": (
+            f"OSM class/type: {place.get('class', 'unknown')}/{place.get('type', 'unknown')}. "
+            "Contact, eligibility, hours, and availability may be missing or outdated."
+        ),
+        "external_source": "OpenStreetMap Nominatim",
+        "external_place_id": str(place.get("place_id", "")),
+        "osm_type": place.get("osm_type", ""),
+        "osm_id": str(place.get("osm_id", "")),
+    }
+
+
+def fetch_nominatim_search(query, limit=8):
+    params = {
+        "q": query,
+        "format": "jsonv2",
+        "addressdetails": 1,
+        "extratags": 1,
+        "namedetails": 1,
+        "dedupe": 1,
+        "limit": limit,
+    }
+    contact_email = os.getenv("LIFT_CONTACT_EMAIL", "")
+    if "@" in contact_email:
+        params["email"] = contact_email
+    url = f"{PUBLIC_RESOURCE_SEARCH_API}?{urlencode(params)}"
+    request = Request(
+        url,
+        headers={
+            "User-Agent": get_public_api_user_agent(),
+            "Accept": "application/json",
+        },
+    )
+
+    with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+        payload = response.read().decode("utf-8")
+    return json.loads(payload)
+
+
+def fetch_external_resource_data(user_need, resource_category, primary_location, additional_locations, radius_miles):
+    """
+    Real public-data grounding layer.
+
+    Calls OpenStreetMap Nominatim over HTTP and normalizes returned JSON into the
+    columns used by the LIFT matching/gap tool.
+    """
+
+    locations = [primary_location] + list(additional_locations or [])
+    location_text = "; ".join([loc for loc in locations if str(loc).strip()]) or "Grand Rapids, MI"
+    queries = [f"{term} {location_text}" for term in category_to_search_terms(resource_category, user_need)][:3]
+
+    trace = {
+        "data_source": "OpenStreetMap Nominatim",
+        "api_endpoint": PUBLIC_RESOURCE_SEARCH_API,
+        "http_request_made": False,
+        "queries": queries,
+        "result_count": 0,
+        "fallback_used": False,
+        "errors": [],
+        "usage_note": "Public OSM place-search data; provider details must still be confirmed directly.",
+    }
+
+    records = []
+    seen_keys = set()
+
+    for query in queries:
+        try:
+            trace["http_request_made"] = True
+            if records or trace["errors"]:
+                time.sleep(1)
+            results = fetch_nominatim_search(query)
+        except (HTTPError, URLError, TimeoutError, socket.timeout, json.JSONDecodeError) as error:
+            trace["errors"].append(f"{query}: {type(error).__name__}: {error}")
+            continue
+
+        for place in results:
+            key = (place.get("osm_type"), place.get("osm_id"), place.get("place_id"))
+            if key in seen_keys or not place.get("lat") or not place.get("lon"):
+                continue
+            seen_keys.add(key)
+            records.append(normalize_nominatim_place(place, resource_category))
+
+    if records:
+        trace["result_count"] = len(records)
+        return pd.DataFrame(records), trace
+
+    trace["fallback_used"] = True
+    trace["usage_note"] = (
+        "The external API returned no usable records or could not be reached. "
+        "The app used labeled demo fallback rows so the workflow can still run."
+    )
+    fallback_df = synthetic_resource_data()
+    trace["result_count"] = len(fallback_df)
+    return fallback_df, trace
 
 
 def synthetic_resource_data():
@@ -486,10 +664,10 @@ def synthetic_resource_data():
 def check_provider_website_mcp_tool(provider_name, website_url, category, location):
     """
     MCP-style tool for basic provider website checking.
-    
-    This demonstrates how the agent would call a tool to verify provider information.
-    Uses synthetic/demo data for safety; does not perform real web scraping.
-    
+
+    Performs a basic public HTTP request when a usable website URL is available.
+    It does not log in, bypass access controls, submit forms, or contact providers.
+
     Input:
       - provider_name: name of the provider
       - website_url: provider's website URL
@@ -504,49 +682,84 @@ def check_provider_website_mcp_tool(provider_name, website_url, category, locati
       - limitations: tool limitations
     """
     
-    import random
-    
     tool_call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-    
-    # For demo purposes, return synthetic results
-    possible_statuses = [
-        {
-            "status": "reachable",
-            "confidence": "high",
-            "notes": f"Website appears to be live. Main page loads successfully. Phone contact and intake information are visible.",
-            "website_components_found": ["phone", "email", "hours", "eligibility", "intake_process"],
-        },
-        {
-            "status": "reachable",
-            "confidence": "medium",
-            "notes": f"Website appears reachable but outdated. Some contact information may need verification by phone.",
-            "website_components_found": ["phone", "email", "hours"],
-        },
-        {
-            "status": "unreachable",
-            "confidence": "medium",
-            "notes": f"Website appears down or DNS failure. Recommend phone contact instead.",
+
+    if not website_url or str(website_url).strip().lower().startswith("not returned"):
+        return {
+            "tool_name": "check_provider_website_mcp_tool",
+            "provider_name": provider_name,
+            "website_url": website_url,
+            "category": category,
+            "location": location,
+            "status": "unknown",
+            "http_status": None,
+            "confidence": "low",
+            "notes": "No provider website URL was returned by the external place-search API.",
             "website_components_found": [],
-        },
-    ]
-    
-    result = random.choice(possible_statuses)
-    
+            "timestamp": tool_call_time,
+            "limitations": [
+                "The external place-search result did not include a URL to check.",
+                "Confirm provider details directly before relying on them.",
+            ],
+            "recommendation": "Use phone, official directory records, or direct search to verify provider details.",
+        }
+
+    normalized_url = str(website_url).strip()
+    if not normalized_url.startswith(("http://", "https://")):
+        normalized_url = f"https://{normalized_url}"
+
+    try:
+        request = Request(
+            normalized_url,
+            headers={
+                "User-Agent": get_public_api_user_agent(),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            status_code = response.getcode()
+            content_type = response.headers.get("Content-Type", "")
+            html = response.read(25000).decode("utf-8", errors="ignore").lower()
+
+        components = []
+        if any(term in html for term in ["phone", "tel:", "call us", "contact"]):
+            components.append("phone_or_contact")
+        if any(term in html for term in ["mailto:", "email"]):
+            components.append("email")
+        if any(term in html for term in ["hours", "open", "appointment"]):
+            components.append("hours_or_appointment")
+        if any(term in html for term in ["eligibility", "qualify", "requirements", "intake"]):
+            components.append("eligibility_or_intake")
+
+        confidence = "high" if status_code < 400 and components else "medium"
+        notes = (
+            f"HTTP {status_code}; content type {content_type or 'unknown'}. "
+            f"Found public page signals: {', '.join(components) if components else 'none in first 25KB'}."
+        )
+        status = "reachable" if status_code < 400 else "unreachable"
+
+    except (HTTPError, URLError, TimeoutError, socket.timeout, ValueError) as error:
+        status_code = getattr(error, "code", None)
+        components = []
+        confidence = "medium" if status_code else "low"
+        status = "unreachable"
+        notes = f"Website check failed: {type(error).__name__}: {error}"
+
     return {
         "tool_name": "check_provider_website_mcp_tool",
         "provider_name": provider_name,
-        "website_url": website_url,
+        "website_url": normalized_url,
         "category": category,
         "location": location,
-        "status": result["status"],
-        "confidence": result["confidence"],
-        "notes": result["notes"],
-        "website_components_found": result.get("website_components_found", []),
+        "status": status,
+        "http_status": status_code,
+        "confidence": confidence,
+        "notes": notes,
+        "website_components_found": components,
         "timestamp": tool_call_time,
         "limitations": [
-            "This tool does not perform real web scraping or JavaScript execution.",
-            "Results are from synthetic/demo data only.",
-            "Real-world use would require appropriate consent and security measures.",
+            "This is a basic public HTTP check only; it does not execute JavaScript or submit forms.",
+            "HTTP reachability is not proof that services are currently available.",
             "Tool assumes public websites only; does not access restricted or login-required pages.",
         ],
         "recommendation": "Always verify by phone or visit website directly before referring user."
@@ -556,7 +769,7 @@ def check_provider_website_mcp_tool(provider_name, website_url, category, locati
 def mcp_basic_provider_check(provider_name, website_url, category=None, location=None, user_need=None):
     """
     Wrapper MCP tool that returns the specified schema required by the project.
-    Internally uses the demo `check_provider_website_mcp_tool` for safe synthetic results.
+    Internally uses `check_provider_website_mcp_tool` for a basic public HTTP check.
 
     Returns:
       - provider_name
@@ -585,11 +798,11 @@ def mcp_basic_provider_check(provider_name, website_url, category=None, location
 
     # Heuristics for basic contact found
     components = raw.get("website_components_found", [])
-    basic_contact_found = "yes" if any(c in components for c in ("phone", "email")) else "no"
+    basic_contact_found = "yes" if any(c in components for c in ("phone_or_contact", "email")) else "no"
 
     hours_label = "Hours unknown"
-    if "hours" in components:
-        hours_label = raw.get("notes", "Business hours listed")
+    if "hours_or_appointment" in components:
+        hours_label = "Hours or appointment language found on public page"
 
     # Cost/app/appointment/documents are unknown in demo mode
     cost_label = "Cost unknown"
@@ -733,7 +946,7 @@ def analyze_resource_gaps_and_build_contingency_plan(
     if matches.empty:
         matches = resources.head(3).copy()
         matches["distance_miles"] = None
-        matches["matched_location"] = "Fallback synthetic match"
+        matches["matched_location"] = "Fallback match"
 
     matches = matches.head(5)
 
@@ -781,7 +994,7 @@ def analyze_resource_gaps_and_build_contingency_plan(
 
     if not validation_flags:
         validation_flags.append(
-            "No major validation issue identified in the synthetic data, but real-world use would require phone/website verification."
+            "No major validation issue identified in the returned data, but real-world use requires phone/website verification."
         )
 
     contingency_plans = [
@@ -865,7 +1078,7 @@ Thank you."""
         )
 
     system_gap_notes = [
-        "This draft uses synthetic/public-style data only.",
+        "This draft uses public external place-search data when available; provider details still require direct verification.",
         "Repeated barriers should be tracked by type: transportation, documentation, eligibility, location, hours, or outdated contact information.",
         "Future production versions could add consent-based email/voicemail review, login, audit logs, and limited permissions.",
     ]
@@ -1015,6 +1228,7 @@ def run_live_llm_tool_workflow(
     context,
     selected_outputs,
     resource_data,
+    data_source_trace,
 ):
     client = get_openai_client()
 
@@ -1048,6 +1262,7 @@ def run_live_llm_tool_workflow(
                     "context": context,
                     "selected_outputs": selected_outputs,
                     "route_trace": route_trace,
+                    "external_data_trace": data_source_trace,
                 },
                 indent=2,
             ),
@@ -1133,7 +1348,8 @@ Include:
 5. Tracker next steps
 6. System gap note
 
-Do not claim real-world verification. State that resource data is synthetic/public-style draft data.
+Do not claim real-world verification. State that public search results still require direct provider confirmation.
+State that the resource list came from this external data trace unless fallback_used is true: {json.dumps(data_source_trace, indent=2)}.
 """
 
     messages.append({"role": "user", "content": final_instruction.strip()})
@@ -1150,6 +1366,7 @@ Do not claim real-world verification. State that resource data is synthetic/publ
         "tool_requested_by_model": True,
         "tool_name": "analyze_resource_gaps_and_build_contingency_plan",
         "tool_mode": "OpenAI model-callable function tool",
+        "external_data_source": data_source_trace,
         "tool_result_keys": list(tool_result.keys()) if tool_result else [],
     }
 
@@ -1231,7 +1448,7 @@ def render_privacy_consent_section():
     
     st.markdown(
         """
-**LIFT Agent is a draft tool using synthetic data only.** 
+**LIFT Agent is a draft tool using public external search data when available, with clearly labeled demo fallback data if the external API is unavailable.** 
 This app does not send emails, call providers, monitor voicemail, scan inboxes, or store case files without your explicit consent and approval at every step.
         """
     )
@@ -1244,7 +1461,7 @@ This app does not send emails, call providers, monitor voicemail, scan inboxes, 
         st.write("")
     with col2:
         st.session_state["consent_synthetic_data"] = st.checkbox(
-            "☑ I understand this draft uses public or synthetic information only.",
+            "☑ I understand this draft uses public external search data or clearly labeled demo fallback information only.",
             value=st.session_state.get("consent_synthetic_data", False),
             key="consent_synthetic_check"
         )
@@ -1317,7 +1534,7 @@ This app does not send emails, call providers, monitor voicemail, scan inboxes, 
 
 def render_privacy_notice():
     st.info(
-        "Use public or synthetic information only. Do not enter private, classified, restricted, protected, "
+        "Use public information only. Do not enter private, classified, restricted, protected, "
         "or sensitive information. This draft does not send emails, monitor phones, access voicemail, or scan inboxes."
     )
 
@@ -1503,7 +1720,7 @@ def render_generate_page():
 
     if not api_key:
         st.warning(
-            "OPENAI_API_KEY is missing. Demo Mode will run with synthetic data and a clearly labeled fallback route. "
+            "OPENAI_API_KEY is missing. Demo Mode will still call the external public data source when available, then run a clearly labeled fallback route. "
             "Demo Mode is interactive, but it is not a live LLM decision."
         )
 
@@ -1514,7 +1731,13 @@ def render_generate_page():
             st.error("Enter a resource need first.")
             st.stop()
 
-        resources_df = synthetic_resource_data()
+        resources_df, data_source_trace = fetch_external_resource_data(
+            user_need=user_need,
+            resource_category=resource_category,
+            primary_location=primary_location,
+            additional_locations=additional_locations,
+            radius_miles=radius_miles,
+        )
         resource_data = resources_df.to_dict(orient="records")
 
         with st.spinner("Running LIFT workflow..."):
@@ -1529,6 +1752,7 @@ def render_generate_page():
                         context=context,
                         selected_outputs=selected_outputs,
                         resource_data=resource_data,
+                        data_source_trace=data_source_trace,
                     )
                 else:
                     route_trace = demo_route_decision(
@@ -1552,6 +1776,7 @@ def render_generate_page():
                         "tool_requested_by_model": False,
                         "tool_name": "analyze_resource_gaps_and_build_contingency_plan",
                         "tool_mode": "Demo fallback direct local call",
+                        "external_data_source": data_source_trace,
                         "note": "This proves the workflow and custom tool output, but not live LLM tool-calling.",
                     }
 
@@ -1560,6 +1785,7 @@ def render_generate_page():
                 st.session_state["route_trace"] = route_trace
                 st.session_state["tool_trace"] = tool_trace
                 st.session_state["tool_result"] = tool_result
+                st.session_state["data_source_trace"] = data_source_trace
                 st.session_state["final_text"] = final_text
                 st.session_state["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1586,6 +1812,13 @@ def render_generate_page():
             st.metric("Mode", "Live LLM" if "LIVE" in route_trace.get("routing_mode", "") else "Demo")
         
         st.markdown(f"**Reason:** {route_trace.get('reason', 'No reason provided')}")
+
+        data_source_trace = st.session_state.get("data_source_trace", {})
+        if data_source_trace:
+            source_label = data_source_trace.get("data_source", "Unknown source")
+            result_count = data_source_trace.get("result_count", 0)
+            fallback_label = "fallback used" if data_source_trace.get("fallback_used") else "external API results"
+            st.caption(f"Grounding source: {source_label} | {result_count} records | {fallback_label}")
         
         if route_trace.get("evidence"):
             st.markdown("**Evidence:**")
@@ -1600,6 +1833,8 @@ def render_generate_page():
             with col2:
                 st.subheader("Custom Tool Execution")
                 st.json(st.session_state.get("tool_trace", {}))
+            st.subheader("External Data Call")
+            st.json(data_source_trace)
 
         st.markdown(st.session_state["final_text"])
 
@@ -1672,7 +1907,7 @@ def render_generate_page():
         if selected_providers:
             st.subheader(f"🔎 {get_text('Basic Provider Check', language)}")
             st.caption(
-                "This is a basic synthetic/demo provider check. It is not full real-world verification. "
+                "This is a basic public HTTP provider check when a website URL is available. It is not full real-world verification. "
                 "Confirm details directly with the provider before relying on them."
             )
 
@@ -1822,7 +2057,7 @@ This Project 3 draft is not a generic chatbot and not a static resource list. It
 
 ### What this draft does
 
-- Uses synthetic/public-style data
+- Uses public external search data when available
 - Supports multiple locations and radius-based matching
 - Separates 24/7 support from business-hours resources
 - Flags transportation, documentation, eligibility, and validation barriers
@@ -1848,7 +2083,7 @@ Future versions could add consent-based integrations, login, role-based access, 
     workflow_steps = [
         ("1", "User Need", "The user enters a resource need, location, and context."),
         ("2", "LLM Route Decision", "The model selects the next workflow route when the API key is available."),
-        ("3", "Custom Tool Call", "The app calls the custom LIFT tool for resource fit and gap review."),
+        ("3", "External Data + Custom Tool Call", "The app calls a public search API, then passes normalized records into the custom LIFT tool for resource fit and gap review."),
         ("4", "Resource Fit + Gap Analysis", "The tool reviews matches, barriers, eligibility, hours, and access issues."),
         ("5", "Outreach + Tracker", "The app drafts outreach and creates follow-up tracker rows."),
         ("6", "User Approval Layer", "The user reviews everything before using any outreach."),
@@ -1873,7 +2108,7 @@ def render_monitoring_page():
         """
 This section documents the future validation concept.
 
-For the working draft, validation is manual and synthetic. A production version could validate:
+For the working draft, validation is manual and based on public search results. A production version could validate:
 
 - Website availability
 - Main office phone

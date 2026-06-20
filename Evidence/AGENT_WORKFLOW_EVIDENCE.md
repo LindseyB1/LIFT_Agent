@@ -161,7 +161,9 @@ Tool traces show:
 
 ---
 
-## MCP-Style Tool: check_provider_website_mcp_tool
+## External Data and MCP-Style Tool: check_provider_website_mcp_tool
+
+Before the model writes the final LIFT plan, the app calls the OpenStreetMap Nominatim public search API and normalizes returned JSON into resource rows. The Agent Decision Trace shows the endpoint, query strings, result count, errors, and whether fallback data was used.
 
 ### Structure
 
@@ -178,8 +180,8 @@ def check_provider_website_mcp_tool(
 
 ```python
 check_provider_website_mcp_tool(
-    provider_name="Kent County Community Food Pantry",
-    website_url="https://example.org/food",
+    provider_name="Pleasant Hearts Pet Food Pantry",
+    website_url="https://www.pleasantheartspetfoodpantry.org/",
     category="Food / Basic Needs",
     location="Grand Rapids, MI"
 )
@@ -190,22 +192,20 @@ check_provider_website_mcp_tool(
 ```json
 {
   "tool_name": "check_provider_website_mcp_tool",
-  "provider_name": "Kent County Community Food Pantry",
-  "website_url": "https://example.org/food",
+  "provider_name": "Pleasant Hearts Pet Food Pantry",
+  "website_url": "https://www.pleasantheartspetfoodpantry.org/",
   "status": "reachable",
+  "http_status": 200,
   "confidence": "high",
-  "notes": "Website appears to be live. Main page loads. Contact info visible.",
+  "notes": "HTTP 200; content type text/html. Found public page signals: phone_or_contact, email.",
   "website_components_found": [
-    "phone",
-    "email",
-    "hours",
-    "eligibility",
-    "intake_process"
+    "phone_or_contact",
+    "email"
   ],
   "timestamp": "2026-06-14 14:23:00 UTC",
   "limitations": [
-    "This tool does not perform real web scraping.",
-    "Results from synthetic/demo data only.",
+    "This is a basic public HTTP check only.",
+    "HTTP reachability is not proof that services are currently available.",
     "Does not access login-required pages."
   ],
   "recommendation": "Always verify by phone before referring user."
@@ -214,13 +214,12 @@ check_provider_website_mcp_tool(
 
 ### Current Implementation
 
-Uses **synthetic/demo results** for safety:
+Uses **real public HTTP requests** when a provider URL is available:
 - Status: `"reachable"`, `"unreachable"`, or `"unknown"`
 - Confidence: `"high"`, `"medium"`, or `"low"`
-- Components: Checks what info is listed (phone, email, hours, etc.)
+- Components: Scans public HTML for contact, email, hours, appointment, eligibility, or intake signals
 
 **NOT implemented (for safety):**
-- Real HTTP requests
 - DOM parsing / JavaScript execution
 - Credential checking
 - Behind-login content
@@ -307,10 +306,10 @@ st.session_state["generated_at"]  # Timestamp
 - Evidence list shown: Yes
 
 ### ✅ App includes basic provider check tool
-- MCP-style placeholder exists: Yes
+- MCP-style public HTTP check exists: Yes
 - Function signature documented: Yes
 - Input/output structure clear: Yes
-- Synthetic results demo: Yes
+- External data trace visible: Yes
 
 ### ✅ App generates warm outreach drafts for selected providers
 - Provider selection UI: Yes

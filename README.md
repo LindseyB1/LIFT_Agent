@@ -115,7 +115,7 @@ OPENAI_API_KEY = "your_key_here"
 
 **LIFT Agent** (Locate. Identify. Follow-up. Track.) is an AI-supported provider matching and warm outreach workflow built for Project 3 in a Generative AI course.
 
-**LIFT is a draft tool using synthetic/public data only.** It helps match users to resources, identify access barriers, draft outreach messages, and track follow-ups—all requiring human review and approval at every step.
+**LIFT is a draft tool using public external search data when available, with clearly labeled demo fallback data if the external API is unavailable.** It helps match users to resources, identify access barriers, draft outreach messages, and track follow-ups—all requiring human review and approval at every step.
 
 ### What LIFT Does
 
@@ -131,7 +131,7 @@ OPENAI_API_KEY = "your_key_here"
 - ❌ Monitor voicemail or scan inboxes
 - ❌ Store private case files without explicit consent
 - ❌ Claim to be the final authority on resource fit
-- ❌ Use real-world operational data (synthetic data only)
+- ❌ Treat public search results as verified provider availability
 
 ---
 
@@ -203,7 +203,7 @@ The app will open at `http://localhost:8501`.
 
 Before generating a plan, you **must** check all four required boxes:
 
-1. ☑ I understand this draft uses public or synthetic information only.
+1. ☑ I understand this draft uses public external search data or clearly labeled demo fallback information only.
 2. ☑ I will not enter private, classified, restricted, protected, or sensitive personal information.
 3. ☑ I understand this app does not send emails, contact providers, scan inboxes, monitor phones, or access voicemail.
 4. ☑ I understand AI-generated outreach must be reviewed and approved by a human before use.
@@ -303,16 +303,26 @@ Every time you generate a plan, LIFT shows:
 
 ---
 
-## MCP-Style Tool Explanation
+## External Data and MCP-Style Tool Explanation
 
-LIFT includes a **Model Context Protocol (MCP)-style tool placeholder** called `check_provider_website_mcp_tool`.
+LIFT includes a real external grounding step and a **Model Context Protocol (MCP)-style provider check tool**.
 
 ### What It Does
 
+Before the model writes the LIFT plan, the app calls the OpenStreetMap Nominatim public search API:
+
+```text
+GET https://nominatim.openstreetmap.org/search
+```
+
+The returned JSON is normalized into provider/resource rows, passed into the model-callable `analyze_resource_gaps_and_build_contingency_plan` tool, and shown in the Agent Decision Trace as `external_data_source`.
+
+Selected provider checks then use a basic public HTTP request:
+
 ```python
 check_provider_website_mcp_tool(
-	provider_name="Kent County Community Food Pantry",
-	website_url="https://example.org/food",
+	provider_name="Example Provider",
+	website_url="https://provider.example.org",
 	category="Food / Basic Needs",
 	location="Grand Rapids, MI"
 )
@@ -323,13 +333,14 @@ check_provider_website_mcp_tool(
 ```json
 {
   "status": "reachable",
+  "http_status": 200,
   "confidence": "high",
-  "notes": "Website appears to be live. Main page loads. Phone contact visible.",
-  "website_components_found": ["phone", "email", "hours", "eligibility"],
+  "notes": "HTTP 200; content type text/html. Found public page signals: phone_or_contact, email.",
+  "website_components_found": ["phone_or_contact", "email"],
   "timestamp": "2026-06-14 14:23:00 UTC",
   "limitations": [
-	"Does not perform real web scraping.",
-	"Results from synthetic/demo data only.",
+	"Basic public HTTP check only.",
+	"Does not execute JavaScript or submit forms.",
 	"Assumes public websites only."
   ]
 }
@@ -337,10 +348,10 @@ check_provider_website_mcp_tool(
 
 ### Current Implementation
 
-For **safety**, the tool uses **synthetic/demo results**. A production version could:
+The current implementation performs real public HTTP requests when URLs are available. It does not log in, submit forms, bypass access controls, or claim provider availability is verified. A production version could:
 
-- Validate website reachability via HTTP HEAD/GET
-- Parse public contact information
+- Add a formal 211 or Google Places integration
+- Parse more public contact information
 - Verify hours of operation
 - Flag outdated contact data
 
@@ -350,7 +361,7 @@ For **safety**, the tool uses **synthetic/demo results**. A production version c
 
 ### What LIFT Assumes
 
-- **Synthetic data only:** All resource records are for demonstration; not linked to real operational systems.
+- **Public data only:** Resource records come from public external search results when available, with clearly labeled demo fallback data if the API is unavailable.
 - **Public information only:** No private, classified, restricted, protected, or sensitive personal information.
 - **No automation:** Nothing is sent or accessed automatically.
 - **Human approval required:** Every outreach draft requires human review before use.
@@ -373,8 +384,8 @@ Users can enable/disable:
 
 ## Known Limitations
 
-1. **Synthetic Data:** Resource records are demo-only. Not real operational directory.
-2. **No Real Verification:** Website checks do not perform actual HTTP requests in this draft.
+1. **Public Search Data:** OpenStreetMap/Nominatim results are real public search results, not a verified human-services directory.
+2. **Basic Verification Only:** Website checks perform basic public HTTP requests, but they do not prove services are currently available.
 3. **No Real Outreach:** Drafts are not sent automatically; human must copy/paste.
 4. **Limited Eligibility Logic:** Barriers are flagged based on heuristics, not true intake forms.
 5. **No Authentication:** Anyone can use the draft app; future versions would add login/role-based access.
@@ -384,11 +395,12 @@ Users can enable/disable:
 
 ## Data Files
 
-### Synthetic Resource Data
+### External Resource Data
 
-- **File:** `app.py` (function: `synthetic_resource_data()`)
-- **Records:** 8 example resources across 6 categories
-- **Uses:** Kent County, Michigan (Grand Rapids area)
+- **File:** `app.py` (function: `fetch_external_resource_data()`)
+- **External API:** OpenStreetMap Nominatim public search API
+- **Trace:** Query strings, endpoint, result count, errors, and fallback status are shown in the Agent Decision Trace
+- **Fallback:** `synthetic_resource_data()` is retained only as a labeled demo fallback if the external API cannot be reached or returns no usable records
 
 ### Project Structure
 
@@ -463,7 +475,7 @@ python -m pytest Tests/test_smoke.py -v
 
 ### Local Demo Mode
 
-If no `OPENAI_API_KEY`, the app runs in **Demo Mode** with synthetic tool results.
+If no `OPENAI_API_KEY`, the app runs in **Demo Mode**. Demo Mode still attempts the external public data call, then uses a labeled local route/tool execution instead of live LLM routing.
 
 ### Monitoring
 
@@ -481,7 +493,7 @@ If no `OPENAI_API_KEY`, the app runs in **Demo Mode** with synthetic tool result
 
 ### Q: Can I use LIFT with real client data?
 
-**A:** No. LIFT is designed for synthetic/public data only. Using real private data violates the consent agreement and defeats the purpose of the draft.
+**A:** No. LIFT is designed for public resource-search data only. Using real private data violates the consent agreement and defeats the purpose of the draft.
 
 ### Q: What if I don't have an OpenAI API key?
 
@@ -489,7 +501,7 @@ If no `OPENAI_API_KEY`, the app runs in **Demo Mode** with synthetic tool result
 
 ### Q: Can LIFT scan provider websites or call them?
 
-**A:** Not in this version. The MCP tool is a placeholder showing how such functionality could be structured safely. Real web scraping is not implemented.
+**A:** LIFT can perform a basic public HTTP website check when a provider URL is available. It does not call providers, log in, submit forms, execute JavaScript, or prove that services are available.
 
 ### Q: How do I know if a provider is actually available?
 
