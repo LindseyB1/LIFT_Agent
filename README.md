@@ -412,7 +412,7 @@ If no `OPENAI_API_KEY`, the app runs in **Demo Mode**. Demo Mode still attempts 
 
 - **Course:** Generative AI (GVSU)
 - **Project:** Project 3 - Final AI Application
-- **Author:** [Your Name]
+- **Author:** Britney Katherine Lindsey
 - **GitHub:** [LindseyB1/LIFT_Agent](https://github.com/LindseyB1/LIFT_Agent)
 - **Issues & Questions:** Open a GitHub issue
 
