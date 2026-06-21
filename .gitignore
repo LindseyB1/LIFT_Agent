@@ -52,3 +52,5 @@ htmlcov/
 .vscode/settings.json
 .vscode/.ropeproject/
 .streamlit/
+!.streamlit/
+!.streamlit/config.toml

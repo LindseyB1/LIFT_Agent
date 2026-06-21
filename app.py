@@ -4,6 +4,7 @@ import os
 import socket
 import time
 from datetime import datetime
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -12,6 +13,7 @@ import pandas as pd
 import streamlit as st
 
 import ui_components as ui
+from security_utils import validate_user_input
 
 try:
     from openai import OpenAI
@@ -31,6 +33,7 @@ APP_SUBTITLE = "Provider matching, warm outreach drafting, basic provider checks
 DEFAULT_MODEL = os.getenv("P3_DEFAULT_MODEL", "gpt-4o-mini")
 PUBLIC_RESOURCE_SEARCH_API = "https://nominatim.openstreetmap.org/search"
 HTTP_TIMEOUT_SECONDS = 8
+CURATED_CORPUS_PATH = Path("Data/lift_curated_corpus.md")
 
 # Supported languages
 SUPPORTED_LANGUAGES = [
@@ -288,13 +291,6 @@ def get_openai_api_key():
 
 
 def get_openai_client():
-    st.divider()
-    all_consents_checked = render_privacy_consent_section()
-    st.divider()
-
-    if not all_consents_checked:
-        st.info("Check all required consent boxes above to enable the Generate button.")
-
     api_key = get_openai_api_key()
 
     if not OPENAI_AVAILABLE:
@@ -317,6 +313,110 @@ def parse_json_safely(text):
         return json.loads(cleaned)
     except Exception:
         return {}
+
+
+def load_curated_corpus(path=CURATED_CORPUS_PATH):
+    """
+    Load the small curated LIFT corpus used for retrieval grounding.
+
+    Chunking choice:
+    - Each level-2 markdown section is a chunk.
+    - This keeps citations human-readable and prevents unrelated guidance from
+      being blended into one large context block.
+    """
+    corpus_path = Path(path)
+    if not corpus_path.exists():
+        return []
+
+    chunks = []
+    current_title = "Overview"
+    current_lines = []
+
+    for line in corpus_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            if current_lines:
+                chunks.append(
+                    {
+                        "citation_id": f"LIFT-CORPUS-{len(chunks) + 1}",
+                        "source": corpus_path.as_posix(),
+                        "title": current_title,
+                        "content": "\n".join(current_lines).strip(),
+                    }
+                )
+            current_title = line.replace("## ", "", 1).strip()
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    if current_lines:
+        chunks.append(
+            {
+                "citation_id": f"LIFT-CORPUS-{len(chunks) + 1}",
+                "source": corpus_path.as_posix(),
+                "title": current_title,
+                "content": "\n".join(current_lines).strip(),
+            }
+        )
+
+    return chunks
+
+
+def retrieve_curated_context(user_need, resource_category, context, limit=3):
+    """
+    Retrieve the most relevant curated corpus chunks for the current request.
+
+    This is intentionally deterministic so tests and evidence can explain why a
+    citation was included.
+    """
+    chunks = load_curated_corpus()
+    if not chunks:
+        return {
+            "retrieval_mode": "local_curated_corpus",
+            "chunking": "markdown level-2 sections",
+            "query_terms": [],
+            "retrieved_chunks": [],
+            "inline_citations": [],
+        }
+
+    query_text = " ".join(
+        [
+            str(user_need or ""),
+            str(resource_category or ""),
+            str(context.get("transportation", "")),
+            str(context.get("needs_24_7", "")),
+            str(context.get("documents_available", "")),
+            " ".join(context.get("optional_context", [])),
+        ]
+    ).lower()
+    query_terms = set(
+        term
+        for term in query_text.replace("/", " ").replace("-", " ").split()
+        if len(term) >= 4
+    )
+
+    scored = []
+    for chunk in chunks:
+        chunk_text = chunk["content"].lower()
+        score = sum(1 for term in query_terms if term in chunk_text)
+        scored.append((score, chunk))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected = [
+        chunk
+        for score, chunk in scored[:limit]
+        if score > 0
+    ]
+
+    if not selected:
+        selected = [chunk for _score, chunk in scored[:1]]
+
+    return {
+        "retrieval_mode": "local_curated_corpus",
+        "chunking": "markdown level-2 sections",
+        "query_terms": sorted(query_terms),
+        "retrieved_chunks": selected,
+        "inline_citations": [chunk["citation_id"] for chunk in selected],
+    }
 
 
 def get_public_api_user_agent():
@@ -1091,6 +1191,13 @@ Thank you."""
         "Repeated barriers should be tracked by type: transportation, documentation, eligibility, location, hours, or outdated contact information.",
         "Future production versions could add consent-based email/voicemail review, login, audit logs, and limited permissions.",
     ]
+    retrieval_trace = context.get("retrieval_trace", {})
+    citations = retrieval_trace.get("inline_citations", [])
+
+    if citations:
+        system_gap_notes.append(
+            "Curated guidance used for this plan: " + ", ".join(citations) + "."
+        )
 
     if twenty_four_seven_gaps:
         system_gap_notes.append("Potential system gap: selected need may not have enough 24/7 or after-hours coverage.")
@@ -1110,6 +1217,8 @@ Thank you."""
         "tracker_rows": tracker_rows,
         "system_gap_notes": system_gap_notes,
         "recommended_first_resource": best_match.get("resource_name", ""),
+        "retrieval_trace": retrieval_trace,
+        "citations": citations,
     }
 
 
@@ -1359,6 +1468,7 @@ Include:
 
 Do not claim real-world verification. State that public search results still require direct provider confirmation.
 State that the resource list came from this external data trace unless fallback_used is true: {json.dumps(data_source_trace, indent=2)}.
+Use these local curated-corpus citations when they support the recommendation: {json.dumps(context.get("retrieval_trace", {}), indent=2)}.
 """
 
     messages.append({"role": "user", "content": final_instruction.strip()})
@@ -1377,6 +1487,7 @@ State that the resource list came from this external data trace unless fallback_
         "tool_mode": "OpenAI model-callable function tool",
         "external_data_source": data_source_trace,
         "tool_result_keys": list(tool_result.keys()) if tool_result else [],
+        "retrieval_trace": context.get("retrieval_trace", {}),
     }
 
     return final_text, route_trace, tool_trace, tool_result
@@ -1423,6 +1534,12 @@ def build_demo_report(tool_result, route_trace):
 
     for note in tool_result.get("system_gap_notes", []):
         lines.append(f"- {note}")
+
+    if tool_result.get("citations"):
+        lines.append("")
+        lines.append("### Curated corpus citations")
+        for citation in tool_result.get("citations", []):
+            lines.append(f"- [{citation}] Local LIFT curated guidance")
 
     return "\n".join(lines)
 
@@ -1551,6 +1668,12 @@ def render_privacy_notice():
 def render_generate_page():
     language = current_language()
     language_access_needed = st.session_state.get("language_access_needed", "No preference")
+
+    all_consents_checked = render_privacy_consent_section()
+    st.divider()
+
+    if not all_consents_checked:
+        st.info("Check all required consent boxes above to enable the Generate button.")
 
     ui.render_soft_intro_card()
 
@@ -1691,6 +1814,12 @@ def render_generate_page():
 
     st.session_state["optional_context"] = selected_optional
     context["optional_context"] = selected_optional
+    retrieval_trace = retrieve_curated_context(
+        user_need=user_need,
+        resource_category=resource_category,
+        context=context,
+    )
+    context["retrieval_trace"] = retrieval_trace
 
     st.header("4. Follow-up outputs")
 
@@ -1736,6 +1865,14 @@ def render_generate_page():
     if generate:
         if not user_need.strip():
             st.error("Enter a resource need first.")
+            st.stop()
+
+        input_errors, input_warnings = validate_user_input(user_need)
+        for warning in input_warnings:
+            st.warning(warning)
+        if input_errors:
+            for input_error in input_errors:
+                st.error(input_error)
             st.stop()
 
         resources_df, data_source_trace = fetch_external_resource_data(
@@ -1793,6 +1930,7 @@ def render_generate_page():
                 st.session_state["tool_trace"] = tool_trace
                 st.session_state["tool_result"] = tool_result
                 st.session_state["data_source_trace"] = data_source_trace
+                st.session_state["retrieval_trace"] = retrieval_trace
                 st.session_state["final_text"] = final_text
                 st.session_state["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1842,6 +1980,8 @@ def render_generate_page():
                 st.json(st.session_state.get("tool_trace", {}))
             st.subheader("External Data Call")
             st.json(data_source_trace)
+            st.subheader("Curated Corpus Retrieval")
+            st.json(st.session_state.get("retrieval_trace", {}))
 
         st.markdown(st.session_state["final_text"])
 
@@ -1919,50 +2059,53 @@ def render_generate_page():
                 "Confirm details directly with the provider before relying on them. Nothing is contacted automatically."
             )
 
-            existing_provider_checks = st.session_state.get("provider_checks", [])
-            if existing_provider_checks:
-                with st.expander("Previous selected provider checks", expanded=False):
-                    st.json(existing_provider_checks)
+            if not st.session_state.get("privacy_allow_website_checks", True):
+                st.info("Provider website checks are disabled in Privacy Settings.")
+            else:
+                existing_provider_checks = st.session_state.get("provider_checks", [])
+                if existing_provider_checks:
+                    with st.expander("Previous selected provider checks", expanded=False):
+                        st.json(existing_provider_checks)
 
-            run_provider_checks = st.button(
-                "Run selected provider checks",
-                key="run_selected_provider_checks",
-                type="secondary",
-                use_container_width=True,
-            )
+                run_provider_checks = st.button(
+                    "Run selected provider checks",
+                    key="run_selected_provider_checks",
+                    type="secondary",
+                    use_container_width=True,
+                )
 
-            if run_provider_checks:
-                provider_checks = []
+                if run_provider_checks:
+                    provider_checks = []
 
-                with st.spinner("Checking selected provider websites..."):
-                    for c_idx, provider in enumerate(selected_providers):
-                        check = mcp_basic_provider_check(
-                            provider_name=provider.get("name", ""),
-                            website_url=provider.get("website", ""),
-                            category=provider.get("category", ""),
-                            location=provider.get("city", ""),
-                            user_need=st.session_state.get("user_need", ""),
-                        )
-                        provider_checks.append(check)
+                    with st.spinner("Checking selected provider websites..."):
+                        for c_idx, provider in enumerate(selected_providers):
+                            check = mcp_basic_provider_check(
+                                provider_name=provider.get("name", ""),
+                                website_url=provider.get("website", ""),
+                                category=provider.get("category", ""),
+                                location=provider.get("city", ""),
+                                user_need=st.session_state.get("user_need", ""),
+                            )
+                            provider_checks.append(check)
 
-                st.session_state["provider_checks"] = provider_checks
+                    st.session_state["provider_checks"] = provider_checks
 
-                for c_idx, check in enumerate(provider_checks):
-                    provider_name = check.get("provider_name", f"Provider {c_idx + 1}")
-                    with st.expander(f"{provider_name} - basic check", expanded=False):
-                        st.write(f"**Website status:** {check.get('website_status', 'unknown')}")
-                        st.write(f"**Confidence:** {check.get('confidence', 'unknown')}")
-                        st.write(f"**Basic contact found:** {check.get('basic_contact_found', 'unknown')}")
-                        st.write(f"**Hours:** {check.get('hours_label', get_text('Hours unknown', language))}")
-                        st.write(f"**Cost:** {check.get('cost_label', get_text('Cost unknown', language))}")
-                        st.write(f"**Application required:** {check.get('application_required', 'unknown')}")
-                        st.write(f"**Appointment required:** {check.get('appointment_required', 'unknown')}")
-                        st.write(f"**Documents needed:** {check.get('documents_needed', 'unknown')}")
-                        st.write(f"**Checked at:** {check.get('checked_at', 'unknown')}")
-                        st.write(f"**Notes:** {check.get('notes', '')}")
+                    for c_idx, check in enumerate(provider_checks):
+                        provider_name = check.get("provider_name", f"Provider {c_idx + 1}")
+                        with st.expander(f"{provider_name} - basic check", expanded=False):
+                            st.write(f"**Website status:** {check.get('website_status', 'unknown')}")
+                            st.write(f"**Confidence:** {check.get('confidence', 'unknown')}")
+                            st.write(f"**Basic contact found:** {check.get('basic_contact_found', 'unknown')}")
+                            st.write(f"**Hours:** {check.get('hours_label', get_text('Hours unknown', language))}")
+                            st.write(f"**Cost:** {check.get('cost_label', get_text('Cost unknown', language))}")
+                            st.write(f"**Application required:** {check.get('application_required', 'unknown')}")
+                            st.write(f"**Appointment required:** {check.get('appointment_required', 'unknown')}")
+                            st.write(f"**Documents needed:** {check.get('documents_needed', 'unknown')}")
+                            st.write(f"**Checked at:** {check.get('checked_at', 'unknown')}")
+                            st.write(f"**Notes:** {check.get('notes', '')}")
 
-                with st.expander("Agent Decision Trace - selected provider checks", expanded=False):
-                    st.json(provider_checks)
+                    with st.expander("Agent Decision Trace - selected provider checks", expanded=False):
+                        st.json(provider_checks)
 
         # Generate warm outreach for selected providers
         if selected_providers:

@@ -284,10 +284,11 @@ st.session_state["generated_at"]  # Timestamp
 
 ## Acceptance Criteria Evidence
 
-### ✅ App runs locally with `streamlit run app.py`
+### ✅ App imports and core workflow tests pass locally
 - Tested: Yes
-- Works: Yes
-- Demo mode works without API key: Yes
+- Direct test command: `$env:PYTHONDONTWRITEBYTECODE='1'; python Tests\test_smoke.py`
+- Result: PASS, 3 tests
+- Demo mode core tool workflow works without API key: Yes
 
 ### ✅ App works even if no API key is present
 - Uses labeled local routing fallback if no OpenAI API key is present: Yes
@@ -295,8 +296,8 @@ st.session_state["generated_at"]  # Timestamp
 - Still generates resources, outreach, tracker: Yes
 
 ### ✅ Generate is blocked until required consent boxes are checked
-- Consent section renders first: Yes
-- Form hidden until all 4 checked: Yes
+- Consent section renders before generation controls: Yes
+- Generate action is disabled until all 4 boxes are checked: Yes
 - Warning shows if unchecked: Yes
 
 ### ✅ App includes visible Agent Decision Trace

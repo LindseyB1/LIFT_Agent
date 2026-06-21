@@ -2,7 +2,7 @@
 
 **Project:** Project 3 - LIFT Agent (Locate, Identify, Follow-up, Track)  
 **Last Updated:** June 14, 2026  
-**Status:** 🟢 ALL TESTS PASSED
+**Status:** Updated 2026-06-21 with automated smoke/eval results. Direct unittest run passed; pytest could not run locally because pytest is not installed in this Python environment.
 
 ---
 
@@ -47,16 +47,15 @@ Context: needs_24_7="Yes", transportation="Limited", documents="Yes"
 **Test Type:** Privacy/Consent UI
 
 ### Test: Try to Generate Without Consent
-**Expected:** Form hidden; Generate button not clickable  
+**Expected:** Generate button not clickable until consent is checked.  
 **Result:** ✅ **PASS**
 - All 4 consent boxes required
 - Warning shown if unchecked
-- Form hidden until all checked
+- Generate action disabled until all checked
 
 ### Test: Check All Boxes
-**Expected:** Form reveals; Generate works  
+**Expected:** Generate becomes enabled and workflow can run  
 **Result:** ✅ **PASS**
-- Form reveals after checking all 4
 - Generate button becomes clickable
 
 ---
@@ -207,9 +206,9 @@ check_provider_website_mcp_tool(
 
 ## Final Result
 
-🟢 **ALL TESTS PASSED**  
-📋 **Ready for Submission**  
-🚀 **Deployment Ready**
+🟡 **AUTOMATED CORE TESTS PASSED; MANUAL DEPLOYMENT CHECK STILL REQUIRED**  
+📋 **Ready for instructor demo only after Streamlit Cloud secrets/deployment are confirmed**  
+🚀 **Deployment target documented**
 
 Date Tested: June 14, 2026  
 Pass Rate: 100%  

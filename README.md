@@ -192,6 +192,37 @@ Every time you generate a plan, LIFT shows:
 
 ---
 
+## Project 3 Requirement Evidence
+
+### Prompt Engineering
+
+- `Prompts/system_prompt.md` defines persona, scope, refusal behavior, grounding requirements, and structured output pattern.
+- `Prompts/router_prompt.md` includes role + constraints, JSON schema, and few-shot routing examples.
+- `Prompts/model_comparison_prompt.md` defines same-task model comparison criteria.
+
+### Retrieval-Augmented Generation
+
+- Curated corpus: `Data/lift_curated_corpus.md`
+- Chunking choice: level-2 Markdown sections, each cited as `LIFT-CORPUS-*`
+- Runtime trace: retrieved chunks are shown in the Agent Decision Trace and included in the tool result.
+
+### Tool Use / MCP-Style Workflow
+
+- OpenAI tool-calling uses `analyze_resource_gaps_and_build_contingency_plan`.
+- Provider checks use `mcp_basic_provider_check`, a safe public HTTP check that does not log in, submit forms, or bypass access controls.
+
+### Evaluation
+
+- Automated tests: `Tests/test_smoke.py`
+- Recorded results: `Tests/eval_results.md`
+- Build/iteration decisions: `BUILD_LOG.md`
+
+### Multi-Model Status
+
+OpenAI integration is implemented through `OPENAI_API_KEY`. A second-provider comparison rubric is documented in `Prompts/model_comparison_prompt.md`; run and record the comparison when a second provider credential is available. The deterministic demo fallback is a baseline only, not a true second provider.
+
+---
+
 ## External Data and MCP-Style Tool Explanation
 
 LIFT includes a real external grounding step and a **Model Context Protocol (MCP)-style provider check tool**.
