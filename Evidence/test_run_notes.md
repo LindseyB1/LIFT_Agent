@@ -2,7 +2,7 @@
 
 **Project:** Project 3 - LIFT Agent (Locate, Identify, Follow-up, Track)  
 **Last Updated:** June 14, 2026  
-**Status:** Updated 2026-06-21 with automated smoke/eval results. Direct unittest run passed; pytest could not run locally because pytest is not installed in this Python environment.
+**Status:** Updated 2026-06-21 with automated smoke/eval results. Direct unittest run passed after the customer-journey upgrade; pytest could not run locally because pytest is not installed in this Python environment.
 
 ---
 
@@ -38,6 +38,30 @@ Context: needs_24_7="Yes", transportation="Limited", documents="Yes"
 - No API key required
 - All outputs functional
 - <500ms execution time
+
+---
+
+## Test Run 1B: Short Request Customer Journey
+
+**Date:** June 21, 2026  
+**Mode:** Demo fallback / no crash without API key  
+
+### Input
+```
+User Need: "find me a food pantry"
+Category: "Any / Not Sure"
+Primary Location: "Grand Rapids, MI"
+```
+
+### Expected Output
+- Structured intent recognizes Food / Basic Needs
+- Suggested resources appear as selectable cards/menu
+- Agent Decision Trace remains visible
+- Case summary is stored in Streamlit session_state only
+- Case summary can be downloaded/exported
+
+### Automated Result
+✅ **PASS** - Covered by `test_short_request_intent_and_case_record`
 
 ---
 
@@ -209,6 +233,12 @@ check_provider_website_mcp_tool(
 🟡 **AUTOMATED CORE TESTS PASSED; MANUAL DEPLOYMENT CHECK STILL REQUIRED**  
 📋 **Ready for instructor demo only after Streamlit Cloud secrets/deployment are confirmed**  
 🚀 **Deployment target documented**
+
+Latest automated command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python Tests\test_smoke.py`
+
+Latest result:
+`Ran 5 tests ... OK`
 
 Date Tested: June 14, 2026  
 Pass Rate: 100%  

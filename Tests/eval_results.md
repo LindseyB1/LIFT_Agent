@@ -10,7 +10,7 @@ Command:
 Result:
 PASS
 
-Output:
+Output from earlier stabilization run:
 ```text
 ...
 ----------------------------------------------------------------------
@@ -19,10 +19,22 @@ Ran 3 tests in 3.003s
 OK
 ```
 
+Latest output after instructor-feedback upgrade:
+```text
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 2.699s
+
+OK
+```
+
 Coverage:
 - Imports core modules.
 - Confirms the local curated corpus retrieval returns citation IDs.
 - Confirms the demo tool workflow returns matched resources, three contingency plans, tracker rows, retrieval trace, and citations.
+- Confirms a short request like `find me a food pantry` is interpreted as `Food / Basic Needs` in fallback mode.
+- Confirms the session case record includes selected resources, follow-up actions, and session-only storage labeling.
+- Confirms provider website checks expose a visible status shape including `http_status`.
 
 Command:
 `python -m pytest Tests/test_smoke.py -v`

@@ -101,6 +101,7 @@ Before generating a plan, you **must** check all four required boxes:
 
 - **What does the user need help with?**  
   Example: _"I need a food pantry near Grand Rapids, but I work third shift and have limited transportation."_
+  A short request like _"find me a food pantry"_ also works.
 
 - **Resource Category:** Select from 11 categories (Food, Housing, Transportation, Legal, Veteran, etc.)
 
@@ -135,17 +136,18 @@ Select which outputs to generate:
 
 Click **Generate LIFT Plan**. The app will:
 
-1. **AI Routing Decision:** LLM selects the best route (if API key is available).
-2. **Custom Tool Call:** Runs a model-callable tool to analyze resources and gaps.
-3. **Show Results:**
+1. **Structured Intent:** LIFT interprets the request into need type, search area, urgency, barriers/preferences, and missing information.
+2. **AI Routing Decision:** LLM selects the best route if an API key is available. Demo fallback is clearly labeled if no key is present.
+3. **Custom Tool Call:** Runs a model-callable or tool-like function to analyze resources and gaps.
+4. **Show Results:**
    - Agent Decision Trace (why the route was chosen)
-   - Matched resources table
+   - Suggested resource cards/menu
    - Eligibility and access barriers
    - Three contingency plans
 
 ### Step 6: Select Providers & Draft Outreach
 
-1. **Select providers** you want to pursue (checkboxes).
+1. **Select providers** you want to pursue from the resource cards/menu.
 2. **Review/edit outreach** for each selected provider:
    - Subject line
    - Email draft
@@ -158,6 +160,20 @@ Click **Generate LIFT Plan**. The app will:
 
 - **Follow-up Tracker** shows provider name, category, contact method, status, and next step.
 - **Download Tracker CSV** for spreadsheet management.
+- **Session Case Summary** stores the current case in Streamlit session state only and can be downloaded as a text file.
+
+### Professor Demo Path
+
+1. Open the deployed Streamlit app.
+2. Check the four required privacy/consent boxes.
+3. Type `find me a food pantry`.
+4. Keep or change the default search location.
+5. Click **Generate LIFT Plan**.
+6. Review **What LIFT understood** and **Agent Decision Trace**.
+7. Select one or two suggested resources.
+8. Run selected provider website/status checks.
+9. Review outreach drafts and follow-up tracker rows.
+10. Download the session case summary.
 
 ---
 

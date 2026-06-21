@@ -15,6 +15,8 @@ class LiftSmokeTests(unittest.TestCase):
 
         self.assertTrue(hasattr(app, "analyze_resource_gaps_and_build_contingency_plan"))
         self.assertTrue(hasattr(app, "retrieve_curated_context"))
+        self.assertTrue(hasattr(app, "infer_intent_fallback"))
+        self.assertTrue(hasattr(app, "build_case_record"))
         self.assertTrue(hasattr(p3_tools, "analyze_project_request"))
         self.assertTrue(hasattr(security_utils, "validate_user_input"))
 
@@ -74,6 +76,59 @@ class LiftSmokeTests(unittest.TestCase):
         self.assertGreaterEqual(len(result["tracker_rows"]), 1)
         self.assertIn("retrieval_trace", result)
         self.assertGreaterEqual(len(result["citations"]), 1)
+
+    def test_short_request_intent_and_case_record(self):
+        import app
+
+        context = {
+            "transportation": "Limited",
+            "needs_24_7": "Not sure",
+            "documents_available": "Not sure",
+            "urgency": "Routine",
+            "optional_context": [],
+        }
+        intent = app.infer_intent_fallback(
+            user_need="find me a food pantry",
+            resource_category="Any / Not Sure",
+            primary_location="Grand Rapids, MI",
+            context=context,
+        )
+        self.assertEqual(intent["need_type"], "Food / Basic Needs")
+        self.assertIn("DEMO FALLBACK", intent["interpretation_mode"])
+
+        selected = [
+            {
+                "name": "Example Pantry",
+                "category": "Food / Basic Needs",
+                "phone": "616-555-0101",
+                "email": "intake@example.org",
+                "website": "https://example.org",
+            }
+        ]
+        case_record = app.build_case_record(
+            user_request="find me a food pantry",
+            interpreted_intent=intent,
+            search_location="Grand Rapids, MI",
+            suggested_resources=selected,
+            selected_resources=selected,
+            provider_checks=[],
+        )
+        self.assertEqual(case_record["suggested_resource_count"], 1)
+        self.assertEqual(len(case_record["followup_actions"]), 1)
+        self.assertIn("Session only", case_record["storage_mode"])
+
+    def test_provider_check_without_url_has_visible_status_shape(self):
+        import app
+
+        result = app.mcp_basic_provider_check(
+            provider_name="No URL Provider",
+            website_url="Not returned by API",
+            category="Food / Basic Needs",
+            location="Grand Rapids, MI",
+        )
+        self.assertEqual(result["website_status"], "unknown")
+        self.assertIn("http_status", result)
+        self.assertEqual(result["confidence"], "low")
 
 
 if __name__ == "__main__":

@@ -69,6 +69,28 @@ Changed:
 Decision:
 Use a small curated corpus instead of pretending public search results are a complete human-services directory.
 
+## Iteration 6: Instructor Feedback Customer Journey Upgrade
+
+Issues addressed:
+- The app had strong backend agent traces but still felt too much like a project report.
+- Suggested resources were shown mostly as a dataframe instead of a simple selectable menu.
+- There was not a clear session-only "case on record" summary.
+- Short requests needed to visibly become structured intent.
+- Provider website/status tool output needed to be visible in the resource journey.
+- The hover animation moved too quickly.
+
+Changed:
+- Added structured intent interpretation for short requests such as "find me a food pantry."
+- Uses OpenAI interpretation when `OPENAI_API_KEY` is available and labeled demo fallback when it is not.
+- Added `What LIFT understood` to show need type, search area, urgency, barriers/preferences, and missing information.
+- Converted suggested resources into selectable cards while preserving the detailed dataframe in an expander.
+- Added provider-check result display in resource details.
+- Added a session-only case record with selected resources, follow-up actions, provider checks, timestamp, and download.
+- Slowed the LIFT animation frame delay from 65ms to 260ms.
+
+Decision:
+Keep MVP state in `st.session_state`; do not add login, database, compliance system, or account management.
+
 ## Multi-Model Plan
 
 Current implementation:
@@ -86,6 +108,12 @@ Preferred:
 
 Fallback without pytest:
 `python Tests/test_smoke.py`
+
+Latest direct test run:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python Tests\test_smoke.py`
+
+Result:
+5 tests passed.
 
 ## Deployment
 

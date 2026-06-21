@@ -315,6 +315,207 @@ def parse_json_safely(text):
         return {}
 
 
+def infer_intent_fallback(user_need, resource_category, primary_location, context):
+    """Create a transparent fallback interpretation for demo mode."""
+    text = str(user_need or "").lower()
+    missing_information = []
+
+    if not str(primary_location or "").strip():
+        missing_information.append("search location")
+    if resource_category == "Any / Not Sure":
+        missing_information.append("specific resource category")
+    if context.get("transportation") == "Limited":
+        missing_information.append("whether public transit or rides are possible")
+    if context.get("documents_available") == "Not sure":
+        missing_information.append("documents or eligibility proof available")
+
+    need_type = resource_category
+    if resource_category == "Any / Not Sure":
+        if any(term in text for term in ["food", "pantry", "grocer", "meal"]):
+            need_type = "Food / Basic Needs"
+        elif any(term in text for term in ["rent", "housing", "shelter", "utility"]):
+            need_type = "Housing / Utilities"
+        elif any(term in text for term in ["ride", "bus", "transport"]):
+            need_type = "Transportation"
+        elif any(term in text for term in ["legal", "court", "lawyer"]):
+            need_type = "Legal / Administrative"
+
+    urgency = context.get("urgency", "Routine")
+    if any(term in text for term in ["today", "tonight", "urgent", "emergency", "crisis", "right now"]):
+        urgency = "Urgent"
+
+    barriers = []
+    if context.get("transportation") in {"No", "Limited", "Public transit only"}:
+        barriers.append(f"Transportation: {context.get('transportation')}")
+    if context.get("needs_24_7") in {"Yes", "Not sure"}:
+        barriers.append(f"After-hours need: {context.get('needs_24_7')}")
+    if context.get("documents_available") in {"No", "Not sure"}:
+        barriers.append(f"Documents: {context.get('documents_available')}")
+    barriers.extend(context.get("optional_context", []))
+
+    return {
+        "interpretation_mode": "DEMO FALLBACK - no live LLM interpretation",
+        "need_type": need_type,
+        "search_area": primary_location or "Grand Rapids, MI",
+        "urgency": urgency,
+        "barriers_or_preferences": barriers,
+        "missing_information": missing_information,
+        "plain_language_summary": (
+            f"LIFT interpreted the request as a need for {need_type} near "
+            f"{primary_location or 'Grand Rapids, MI'}."
+        ),
+    }
+
+
+def llm_interpret_request(client, user_need, resource_category, primary_location, additional_locations, radius_miles, context):
+    """Use the LLM to convert a short request into structured LIFT intent."""
+    prompt = f"""
+Interpret this LIFT Agent resource-navigation request.
+
+Return JSON only with this schema:
+{{
+  "interpretation_mode": "LIVE LLM INTERPRETATION",
+  "need_type": "short category or need",
+  "search_area": "city/state or area to search",
+  "urgency": "routine | soon | urgent | crisis_or_immediate",
+  "barriers_or_preferences": ["barrier or preference"],
+  "missing_information": ["specific missing detail"],
+  "plain_language_summary": "one short user-friendly summary"
+}}
+
+Rules:
+- Do not invent private facts.
+- If the request is only a few words, infer cautiously and list missing information.
+- Keep the answer practical for resource matching.
+
+User request: {user_need}
+Selected category: {resource_category}
+Primary location: {primary_location}
+Additional locations: {additional_locations}
+Radius miles: {radius_miles}
+Context: {json.dumps(context, indent=2)}
+"""
+
+    response = client.chat.completions.create(
+        model=DEFAULT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You interpret short resource-navigation requests into structured JSON for LIFT Agent.",
+            },
+            {"role": "user", "content": prompt.strip()},
+        ],
+        temperature=0,
+    )
+    parsed = parse_json_safely(response.choices[0].message.content or "")
+    fallback = infer_intent_fallback(user_need, resource_category, primary_location, context)
+
+    return {
+        "interpretation_mode": "LIVE LLM INTERPRETATION",
+        "need_type": parsed.get("need_type") or fallback["need_type"],
+        "search_area": parsed.get("search_area") or fallback["search_area"],
+        "urgency": parsed.get("urgency") or fallback["urgency"],
+        "barriers_or_preferences": parsed.get("barriers_or_preferences") or fallback["barriers_or_preferences"],
+        "missing_information": parsed.get("missing_information") or fallback["missing_information"],
+        "plain_language_summary": parsed.get("plain_language_summary") or fallback["plain_language_summary"],
+        "model": DEFAULT_MODEL,
+    }
+
+
+def provider_row_to_selection(row):
+    """Normalize a matched-resource row for selected-provider session records."""
+    return {
+        "name": row.get("resource_name", "Unnamed resource"),
+        "category": row.get("category", "Unknown"),
+        "phone": row.get("phone", "N/A"),
+        "email": row.get("group_email", "N/A"),
+        "website": row.get("website", "N/A"),
+        "business_hours": row.get("business_hours", "N/A"),
+        "eligibility": row.get("eligibility", "N/A"),
+        "city": row.get("city", "N/A"),
+        "status": row.get("status", "Needs verification"),
+        "distance_miles": row.get("distance_miles", ""),
+    }
+
+
+def build_followup_actions(selected_providers):
+    """Create practical follow-up actions for the session case record."""
+    actions = []
+    for provider in selected_providers:
+        actions.append(
+            {
+                "provider": provider.get("name", "Provider"),
+                "next_action": "Verify eligibility, hours, intake process, and best contact method.",
+                "status": "Not started",
+                "contact_options": {
+                    "phone": provider.get("phone", "N/A"),
+                    "email": provider.get("email", "N/A"),
+                    "website": provider.get("website", "N/A"),
+                },
+            }
+        )
+    return actions
+
+
+def build_case_record(
+    user_request,
+    interpreted_intent,
+    search_location,
+    suggested_resources,
+    selected_resources,
+    provider_checks=None,
+    case_id=None,
+    created_at=None,
+):
+    """Build a session-only MVP case record."""
+    timestamp = created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return {
+        "case_id": case_id or f"LIFT-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        "created_at": timestamp,
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "storage_mode": "Session only unless the user downloads or exports this summary.",
+        "user_request": user_request,
+        "interpreted_intent": interpreted_intent,
+        "search_location": search_location,
+        "suggested_resource_count": len(suggested_resources or []),
+        "suggested_resources": suggested_resources or [],
+        "selected_resources": selected_resources or [],
+        "provider_checks": provider_checks or [],
+        "followup_actions": build_followup_actions(selected_resources or []),
+    }
+
+
+def format_case_summary(case_record):
+    """Format a case record for user download."""
+    lines = [
+        "LIFT AGENT - SESSION CASE SUMMARY",
+        f"Case ID: {case_record.get('case_id', '')}",
+        f"Created: {case_record.get('created_at', '')}",
+        f"Storage: {case_record.get('storage_mode', '')}",
+        "",
+        "USER REQUEST",
+        str(case_record.get("user_request", "")),
+        "",
+        "INTERPRETED INTENT",
+        json.dumps(case_record.get("interpreted_intent", {}), indent=2),
+        "",
+        "SELECTED RESOURCES",
+    ]
+
+    for provider in case_record.get("selected_resources", []):
+        lines.append(f"- {provider.get('name')} | {provider.get('category')} | {provider.get('website')}")
+
+    lines.extend(["", "FOLLOW-UP ACTIONS"])
+    for action in case_record.get("followup_actions", []):
+        lines.append(f"- {action.get('provider')}: {action.get('next_action')} [{action.get('status')}]")
+
+    if case_record.get("provider_checks"):
+        lines.extend(["", "PROVIDER CHECKS"])
+        lines.append(json.dumps(case_record.get("provider_checks", []), indent=2))
+
+    return "\n".join(lines)
+
+
 def load_curated_corpus(path=CURATED_CORPUS_PATH):
     """
     Load the small curated LIFT corpus used for retrieval grounding.
@@ -924,6 +1125,7 @@ def mcp_basic_provider_check(provider_name, website_url, category=None, location
     return {
         "provider_name": raw.get("provider_name"),
         "website_status": website_status,
+        "http_status": raw.get("http_status"),
         "confidence": confidence,
         "basic_contact_found": basic_contact_found,
         "hours_label": hours_label,
@@ -1566,6 +1768,10 @@ def init_session_state():
         st.session_state["language_access_needed"] = "No preference"
     if "optional_context" not in st.session_state:
         st.session_state["optional_context"] = []
+    if "case_history" not in st.session_state:
+        st.session_state["case_history"] = []
+    if "current_case_record" not in st.session_state:
+        st.session_state["current_case_record"] = {}
 
 
 def render_privacy_consent_section():
@@ -1677,7 +1883,8 @@ def render_generate_page():
 
     ui.render_soft_intro_card()
 
-    st.header("1. Locate the need")
+    st.header("1. Tell LIFT what you need")
+    st.caption("A few words are enough to start. Example: find me a food pantry.")
     st.caption(f"Display language: {language} | Service language need: {language_access_needed}")
 
     col_left, col_right = st.columns([2, 1])
@@ -1875,9 +2082,50 @@ def render_generate_page():
                 st.error(input_error)
             st.stop()
 
-        resources_df, data_source_trace = fetch_external_resource_data(
+        interpreted_intent = infer_intent_fallback(
             user_need=user_need,
             resource_category=resource_category,
+            primary_location=primary_location,
+            context=context,
+        )
+
+        if api_key and OPENAI_AVAILABLE:
+            try:
+                intent_client = get_openai_client()
+                interpreted_intent = llm_interpret_request(
+                    client=intent_client,
+                    user_need=user_need,
+                    resource_category=resource_category,
+                    primary_location=primary_location,
+                    additional_locations=additional_locations,
+                    radius_miles=radius_miles,
+                    context=context,
+                )
+            except Exception as error:
+                interpreted_intent["interpretation_warning"] = (
+                    f"Live LLM interpretation failed; fallback interpretation used: {type(error).__name__}"
+                )
+
+        context["interpreted_intent"] = interpreted_intent
+
+        effective_resource_category = resource_category
+        if resource_category == "Any / Not Sure" and interpreted_intent.get("need_type") in [
+            "Food / Basic Needs",
+            "Housing / Utilities",
+            "Financial Assistance",
+            "Transportation",
+            "Legal / Administrative",
+            "Behavioral Health",
+            "Emergency / 24-7 Crisis",
+            "Veteran / Service Member Support",
+            "Family Readiness / FRG",
+            "General Support / 24-7 Navigation",
+        ]:
+            effective_resource_category = interpreted_intent["need_type"]
+
+        resources_df, data_source_trace = fetch_external_resource_data(
+            user_need=user_need,
+            resource_category=effective_resource_category,
             primary_location=primary_location,
             additional_locations=additional_locations,
             radius_miles=radius_miles,
@@ -1889,7 +2137,7 @@ def render_generate_page():
                 if api_key and OPENAI_AVAILABLE:
                     final_text, route_trace, tool_trace, tool_result = run_live_llm_tool_workflow(
                         user_need=user_need,
-                        resource_category=resource_category,
+                        resource_category=effective_resource_category,
                         primary_location=primary_location,
                         additional_locations=additional_locations,
                         radius_miles=radius_miles,
@@ -1901,13 +2149,13 @@ def render_generate_page():
                 else:
                     route_trace = demo_route_decision(
                         user_need=user_need,
-                        resource_category=resource_category,
+                        resource_category=effective_resource_category,
                         context=context,
                     )
 
                     tool_result = analyze_resource_gaps_and_build_contingency_plan(
                         user_need=user_need,
-                        resource_category=resource_category,
+                        resource_category=effective_resource_category,
                         primary_location=primary_location,
                         additional_locations=additional_locations,
                         radius_miles=radius_miles,
@@ -1931,6 +2179,9 @@ def render_generate_page():
                 st.session_state["tool_result"] = tool_result
                 st.session_state["data_source_trace"] = data_source_trace
                 st.session_state["retrieval_trace"] = retrieval_trace
+                st.session_state["interpreted_intent"] = interpreted_intent
+                st.session_state["provider_checks"] = []
+                st.session_state["current_case_record"] = {}
                 st.session_state["final_text"] = final_text
                 st.session_state["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1942,6 +2193,34 @@ def render_generate_page():
         st.divider()
         st.header("LIFT Output")
         translation_safety_note()
+
+        interpreted_intent = st.session_state.get("interpreted_intent", {})
+        if interpreted_intent:
+            st.subheader("What LIFT understood")
+            intent_cols = st.columns(4)
+            with intent_cols[0]:
+                st.metric("Need", interpreted_intent.get("need_type", "Unknown"))
+            with intent_cols[1]:
+                st.metric("Search Area", interpreted_intent.get("search_area", "Unknown"))
+            with intent_cols[2]:
+                st.metric("Urgency", str(interpreted_intent.get("urgency", "Unknown")).title())
+            with intent_cols[3]:
+                mode_label = "Live LLM" if "LIVE" in interpreted_intent.get("interpretation_mode", "") else "Demo"
+                st.metric("Interpretation", mode_label)
+
+            st.caption(interpreted_intent.get("plain_language_summary", ""))
+            if interpreted_intent.get("barriers_or_preferences"):
+                st.markdown(
+                    "**Barriers/preferences noticed:** "
+                    + "; ".join([str(item) for item in interpreted_intent.get("barriers_or_preferences", [])])
+                )
+            if interpreted_intent.get("missing_information"):
+                st.markdown(
+                    "**Helpful details still missing:** "
+                    + "; ".join([str(item) for item in interpreted_intent.get("missing_information", [])])
+                )
+            if interpreted_intent.get("interpretation_warning"):
+                st.warning(interpreted_intent["interpretation_warning"])
         
         # Agent Decision Trace
         st.subheader(f"🤖 {get_text('Agent Decision Trace', language)}")
@@ -1978,6 +2257,8 @@ def render_generate_page():
             with col2:
                 st.subheader("Custom Tool Execution")
                 st.json(st.session_state.get("tool_trace", {}))
+            st.subheader("Structured Intent")
+            st.json(interpreted_intent)
             st.subheader("External Data Call")
             st.json(data_source_trace)
             st.subheader("Curated Corpus Retrieval")
@@ -1989,7 +2270,7 @@ def render_generate_page():
 
         ui.render_result_cards_from_tool_result(tool_result)
 
-        st.subheader("👥 Matched Resources - Select Providers to Pursue")
+        st.subheader("2. Review suggested resources")
         matched_df = pd.DataFrame(tool_result.get("matched_resources", []))
 
         if not matched_df.empty:
@@ -2008,30 +2289,57 @@ def render_generate_page():
                 "distance_miles",
             ]
             existing_columns = [col for col in visible_columns if col in matched_df.columns]
-            st.dataframe(matched_df[existing_columns], use_container_width=True)
-            
-            # Provider selection
-            st.subheader("Which providers do you want to pursue?")
+            provider_checks_by_name = {
+                check.get("provider_name"): check
+                for check in st.session_state.get("provider_checks", [])
+            }
             selected_providers = []
             for idx, row in matched_df.iterrows():
-                if st.checkbox(
-                    f"✓ {row['resource_name']} ({row['category']})",
-                    value=(idx < min(2, len(matched_df))),  # Select first 2 by default
-                    key=f"provider_select_{idx}"
-                ):
-                    selected_providers.append({
-                        "name": row["resource_name"],
-                        "category": row["category"],
-                        "phone": row.get("phone", "N/A"),
-                        "email": row.get("group_email", "N/A"),
-                        "website": row.get("website", "N/A"),
-                        "business_hours": row.get("business_hours", "N/A"),
-                        "eligibility": row.get("eligibility", "N/A"),
-                        "city": row.get("city", "N/A"),
-                    })
+                provider = provider_row_to_selection(row)
+                with st.container(border=True):
+                    top_cols = st.columns([0.08, 0.62, 0.3])
+                    with top_cols[0]:
+                        pursue = st.checkbox(
+                            "Select",
+                            value=(idx < min(2, len(matched_df))),
+                            key=f"provider_select_{idx}",
+                            label_visibility="collapsed",
+                        )
+                    with top_cols[1]:
+                        st.markdown(f"**{provider['name']}**")
+                        st.caption(f"{provider['category']} | {provider['city']} | {provider['status']}")
+                    with top_cols[2]:
+                        distance = provider.get("distance_miles")
+                        distance_label = f"{distance} miles" if distance not in ["", None] else "Distance unknown"
+                        st.caption(distance_label)
+                        st.caption(f"Hours: {provider['business_hours']}")
+
+                    detail_cols = st.columns(3)
+                    with detail_cols[0]:
+                        st.write(f"**Phone:** {provider['phone']}")
+                    with detail_cols[1]:
+                        st.write(f"**Email:** {provider['email']}")
+                    with detail_cols[2]:
+                        st.write(f"**Website:** {provider['website']}")
+
+                    with st.expander("Why LIFT suggested this / what to verify", expanded=False):
+                        st.write(f"Eligibility: {provider['eligibility']}")
+                        st.write("Recommended verification: confirm current service, hours, intake steps, documents, and transportation requirements.")
+                        check = provider_checks_by_name.get(provider["name"])
+                        if check:
+                            st.markdown("**Provider status check result**")
+                            st.json(check)
+                        else:
+                            st.caption("No website/status check has been run for this provider yet.")
+
+                    if pursue:
+                        selected_providers.append(provider)
+
+            with st.expander("Detailed resource table", expanded=False):
+                st.dataframe(matched_df[existing_columns], use_container_width=True)
 
         
-        st.subheader("📋 Follow-Up Tracker")
+        st.subheader("3. Track follow-up actions")
         tracker_df = pd.DataFrame(tool_result.get("tracker_rows", []))
 
         if not tracker_df.empty:
@@ -2051,9 +2359,28 @@ def render_generate_page():
         except NameError:
             selected_providers = []
 
+        suggested_resources = []
+        if not matched_df.empty:
+            suggested_resources = [
+                provider_row_to_selection(row)
+                for _, row in matched_df.iterrows()
+            ]
+
+        existing_case_record = st.session_state.get("current_case_record", {})
+        st.session_state["current_case_record"] = build_case_record(
+            user_request=st.session_state.get("user_need", ""),
+            interpreted_intent=st.session_state.get("interpreted_intent", {}),
+            search_location=data_source_trace.get("queries", [""])[0] if data_source_trace else "",
+            suggested_resources=suggested_resources,
+            selected_resources=selected_providers,
+            provider_checks=st.session_state.get("provider_checks", []),
+            case_id=existing_case_record.get("case_id"),
+            created_at=existing_case_record.get("created_at"),
+        )
+
         # Basic provider checks for selected providers
         if selected_providers:
-            st.subheader(f"🔎 {get_text('Basic Provider Check', language)}")
+            st.subheader(f"4. {get_text('Basic Provider Check', language)}")
             st.caption(
                 "This is a basic public HTTP provider check when a website URL is available. It is not full real-world verification. "
                 "Confirm details directly with the provider before relying on them. Nothing is contacted automatically."
@@ -2089,11 +2416,23 @@ def render_generate_page():
                             provider_checks.append(check)
 
                     st.session_state["provider_checks"] = provider_checks
+                    existing_case_record = st.session_state.get("current_case_record", {})
+                    st.session_state["current_case_record"] = build_case_record(
+                        user_request=st.session_state.get("user_need", ""),
+                        interpreted_intent=st.session_state.get("interpreted_intent", {}),
+                        search_location=data_source_trace.get("queries", [""])[0] if data_source_trace else "",
+                        suggested_resources=suggested_resources,
+                        selected_resources=selected_providers,
+                        provider_checks=provider_checks,
+                        case_id=existing_case_record.get("case_id"),
+                        created_at=existing_case_record.get("created_at"),
+                    )
 
                     for c_idx, check in enumerate(provider_checks):
                         provider_name = check.get("provider_name", f"Provider {c_idx + 1}")
                         with st.expander(f"{provider_name} - basic check", expanded=False):
                             st.write(f"**Website status:** {check.get('website_status', 'unknown')}")
+                            st.write(f"**HTTP status:** {check.get('http_status', 'not available')}")
                             st.write(f"**Confidence:** {check.get('confidence', 'unknown')}")
                             st.write(f"**Basic contact found:** {check.get('basic_contact_found', 'unknown')}")
                             st.write(f"**Hours:** {check.get('hours_label', get_text('Hours unknown', language))}")
@@ -2109,7 +2448,7 @@ def render_generate_page():
 
         # Generate warm outreach for selected providers
         if selected_providers:
-            st.subheader("✉️ Warm Outreach Drafts (Per Selected Provider)")
+            st.subheader("5. Generate follow-up and outreach")
             st.caption("**IMPORTANT:** These are drafts only. Nothing is sent automatically. Each draft requires human review and approval before use.")
 
             outreach_all = "LIFT AGENT - WARM OUTREACH DRAFTS\n"
@@ -2206,6 +2545,44 @@ def render_generate_page():
             )
         else:
             st.info("💡 Select providers above to generate warm outreach drafts.")
+
+        case_record = st.session_state.get("current_case_record", {})
+        if case_record:
+            st.subheader("6. Save/export this session case")
+            st.info(
+                "Session-only MVP: LIFT keeps this case summary in browser session state. "
+                "It is not permanently stored unless you download/export it."
+            )
+
+            summary_cols = st.columns(4)
+            with summary_cols[0]:
+                st.metric("Case ID", case_record.get("case_id", ""))
+            with summary_cols[1]:
+                st.metric("Suggested", case_record.get("suggested_resource_count", 0))
+            with summary_cols[2]:
+                st.metric("Selected", len(case_record.get("selected_resources", [])))
+            with summary_cols[3]:
+                st.metric("Follow-ups", len(case_record.get("followup_actions", [])))
+
+            with st.expander("Case summary details", expanded=False):
+                st.json(case_record)
+
+            case_summary_text = format_case_summary(case_record)
+            st.download_button(
+                "Download Case Summary",
+                data=case_summary_text,
+                file_name=f"{case_record.get('case_id', 'lift_case')}.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+
+            if st.button("Save case to this session", use_container_width=True):
+                st.session_state["case_history"].append(case_record)
+                st.success("Saved to this session's case history.")
+
+            if st.session_state.get("case_history"):
+                with st.expander("Session case history", expanded=False):
+                    st.json(st.session_state["case_history"])
 
 
 def render_about_page():

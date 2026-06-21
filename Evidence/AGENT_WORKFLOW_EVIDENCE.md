@@ -259,6 +259,13 @@ Uses **real public HTTP requests** when a provider URL is available:
 - User must copy/paste
 - User manually hits Send in their email client
 
+### 5. Session Case Record
+**MVP record handling:**
+- Current case is stored in `st.session_state`
+- Case summary includes user request, interpreted intent, suggested resources, selected resources, provider checks, follow-up actions, and timestamps
+- No permanent database storage is created
+- User can download/export the case summary
+
 ---
 
 ## Workflow Evidence: Session State
@@ -278,6 +285,9 @@ st.session_state["tool_trace"]  # Tool execution metadata
 st.session_state["tool_result"]  # Full tool result (gaps, plans, etc.)
 st.session_state["final_text"]  # Formatted report
 st.session_state["generated_at"]  # Timestamp
+st.session_state["interpreted_intent"]  # Structured need/location/barrier interpretation
+st.session_state["current_case_record"]  # Session-only MVP case summary
+st.session_state["case_history"]  # User-saved case records for the current session
 ```
 
 ---
@@ -305,6 +315,8 @@ st.session_state["generated_at"]  # Timestamp
 - Reason shown: Yes
 - Confidence level shown: Yes
 - Evidence list shown: Yes
+- Structured intent shown: Yes
+- Tool and provider check traces visible: Yes
 
 ### ✅ App includes basic provider check tool
 - MCP-style public HTTP check exists: Yes
@@ -324,6 +336,13 @@ st.session_state["generated_at"]  # Timestamp
 - Table display: Yes
 - Provider name, category, status shown: Yes
 - CSV export button: Yes
+
+### ✅ App includes session-only case record
+- User request and interpreted intent captured: Yes
+- Suggested and selected resources captured: Yes
+- Follow-up actions captured: Yes
+- Download/export available: Yes
+- No database or login required: Yes
 
 ### ✅ README explains the project clearly
 - Overview section: Yes

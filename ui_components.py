@@ -499,7 +499,7 @@ def render_hover_animation(
     frame_names: Optional[List[str]] = None,
     width_px: int = 620,
     height_px: int = 620,
-    frame_delay_ms: int = 65,
+    frame_delay_ms: int = 260,
 ) -> None:
     """
     Render a hover-triggered flipbook animation using real local image files.
