@@ -20,10 +20,7 @@ Expected animation files:
 - assets/lift_animation/32 LIFT Project.png
 
 Expected brand icon files:
-- assets/lift_brand/LIFT Agent icon2.png
 - assets/lift_brand/LIFT Agent icon.png
-
-The code checks for icon2 first, then icon.
 
 Important:
 Most functions are presentational only.
@@ -71,7 +68,6 @@ ANIMATION_FRAME_NAMES = [
 ]
 
 BRAND_ICON_NAMES = [
-    "LIFT Agent icon2.png",
     "LIFT Agent icon.png",
 ]
 
@@ -382,7 +378,6 @@ def render_brand_header(
     Render the top-left brand label.
 
     Uses the real brand icon image if found:
-    - assets/lift_brand/LIFT Agent icon2.png
     - assets/lift_brand/LIFT Agent icon.png
 
     If no brand icon is found, it falls back to text with a CSS dot flower and
@@ -416,8 +411,7 @@ def render_brand_header(
     safe_author_line = html.escape(author_line)
 
     st.warning(
-        "Brand icon not found. Expected `assets/lift_brand/LIFT Agent icon2.png` "
-        "or `assets/lift_brand/LIFT Agent icon.png`."
+        "Brand icon not found. Expected" "assets/lift_brand/LIFT Agent icon.png`."
     )
 
     st.markdown(
