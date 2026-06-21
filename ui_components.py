@@ -61,6 +61,7 @@ LIFT_COLORS = {
 
 ANIMATION_FRAME_DIR = Path("assets/lift_animation")
 BRAND_ICON_DIR = Path("assets/lift_brand")
+WHAT_IMAGE_PATH = Path("assets/clean_info_lift/What.png")
 
 ANIMATION_FRAME_NAMES = [
     f"{number} LIFT Project.png"
@@ -90,7 +91,7 @@ def inject_global_styles() -> None:
         }}
 
         .block-container {{
-            padding-top: 1.2rem;
+            padding-top: 0.65rem;
             padding-bottom: 4rem;
             max-width: 1180px;
         }}
@@ -104,16 +105,21 @@ def inject_global_styles() -> None:
             display: flex;
             align-items: center;
             justify-content: flex-start;
-            gap: 0.85rem;
-            padding: 0.2rem 0 0.75rem 0;
+            gap: 1rem;
+            padding: 0.75rem 0.95rem;
+            margin: 0 0 0.45rem 0;
+            background: {LIFT_COLORS['background']};
+            border: 1px solid {LIFT_COLORS['border']};
+            border-radius: 14px;
         }}
 
         .lift-brand-logo {{
-            width: min(260px, 70vw);
+            width: clamp(92px, 20vw, 170px);
             height: auto;
             display: block;
-            border-radius: 12px;
-            box-shadow: 0 10px 28px rgba(36, 48, 47, 0.07);
+            border-radius: 8px;
+            box-shadow: none;
+            flex: 0 0 auto;
         }}
 
         .lift-dot-flower {{
@@ -176,24 +182,52 @@ def inject_global_styles() -> None:
         }}
 
         .lift-brand-title {{
-            font-size: clamp(1.65rem, 3vw, 2.45rem);
-            font-weight: 750;
-            line-height: 1.02;
-            color: {LIFT_COLORS['deep_teal']};
-            letter-spacing: 0.02em;
+            font-size: clamp(1.2rem, 2.9vw, 2.15rem);
+            font-weight: 850;
+            line-height: 1.08;
+            color: {LIFT_COLORS['teal']};
+            letter-spacing: 0;
             margin: 0;
         }}
 
         .lift-brand-subtitle {{
             font-size: 0.98rem;
-            color: {LIFT_COLORS['muted_text']};
-            font-style: italic;
-            margin-top: 0.15rem;
+            color: {LIFT_COLORS['text']};
+            margin-top: 0.25rem;
+        }}
+
+        .lift-top-menu {{
+            margin: 0 0 0.55rem 0;
+        }}
+
+        .lift-start-cue {{
+            color: {LIFT_COLORS['deep_teal']};
+            background: rgba(247, 243, 236, 0.92);
+            border: 1px solid {LIFT_COLORS['border']};
+            border-radius: 12px;
+            padding: 0.7rem 0.9rem;
+            margin: 0.35rem 0 0.65rem 0;
+            font-weight: 750;
+            text-align: center;
+        }}
+
+        .lift-what-wrap {{
+            display: flex;
+            justify-content: center;
+            margin: 0.15rem 0 0.55rem 0;
+        }}
+
+        .lift-what-image {{
+            width: min(430px, 96vw);
+            height: auto;
+            display: block;
+            border-radius: 18px;
+            box-shadow: 0 14px 42px rgba(36, 48, 47, 0.08);
         }}
 
         .lift-scroll-wrap {{
             text-align: center;
-            margin: 0.7rem 0 2.4rem 0;
+            margin: 0.45rem 0 1rem 0;
         }}
 
         .lift-scroll-button {{
@@ -308,9 +342,56 @@ def inject_global_styles() -> None:
             line-height: 1.45;
         }}
 
+        .stMarkdown,
+        .stMarkdown p,
+        .stCaptionContainer,
+        label,
+        [data-testid="stWidgetLabel"],
+        [data-testid="stCheckbox"] label,
+        [data-testid="stCheckbox"] p,
+        [data-testid="stSelectbox"] label,
+        [data-testid="stTextArea"] label,
+        [data-testid="stTextInput"] label,
+        [data-testid="stSlider"] label {{
+            color: {LIFT_COLORS['text']} !important;
+        }}
+
+        [data-testid="stCaptionContainer"],
+        .stCaptionContainer p,
+        small {{
+            color: {LIFT_COLORS['muted_text']} !important;
+        }}
+
+        [data-testid="stExpander"] {{
+            background: rgba(255, 255, 255, 0.72);
+            border-color: {LIFT_COLORS['border']};
+        }}
+
+        [data-testid="stExpander"] details,
+        [data-testid="stExpander"] summary,
+        [data-testid="stAlert"],
+        [data-testid="stAlert"] p {{
+            color: {LIFT_COLORS['text']} !important;
+        }}
+
         @media (max-width: 900px) {{
             .lift-brand-wrap {{
-                justify-content: center;
+                justify-content: flex-start;
+                align-items: center;
+                gap: 0.75rem;
+                padding: 0.55rem 0.65rem;
+            }}
+
+            .lift-brand-logo {{
+                width: 92px;
+            }}
+
+            .lift-brand-title {{
+                font-size: 1.18rem;
+            }}
+
+            .lift-brand-subtitle {{
+                font-size: 0.86rem;
             }}
 
             .lift-explainer-card {{
@@ -383,10 +464,14 @@ def render_brand_header(
     If no brand icon is found, it falls back to text with a CSS dot flower and
     gives a warning so the missing asset is visible.
     """
+    tagline = "LOCATE IDENTIFY FOLLOW-UP TRACK"
+
     if icon_names is None:
         icon_names = BRAND_ICON_NAMES
 
     icon_path = _find_first_existing_file(Path(icon_dir), icon_names)
+    safe_tagline = html.escape(tagline)
+    safe_author_line = html.escape(author_line)
 
     if icon_path:
         try:
@@ -399,6 +484,10 @@ def render_brand_header(
                         src="{icon_data_uri}"
                         alt="{html.escape(app_name)} logo"
                     />
+                    <div>
+                        <div class="lift-brand-title">{safe_tagline}</div>
+                        <div class="lift-brand-subtitle">{safe_author_line}</div>
+                    </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -408,7 +497,6 @@ def render_brand_header(
             st.warning(f"Brand icon was found but could not be loaded: {exc}")
 
     safe_app_name = html.escape(app_name)
-    safe_author_line = html.escape(author_line)
 
     st.warning(
         "Brand icon not found. Expected" "assets/lift_brand/LIFT Agent icon.png`."
@@ -427,9 +515,73 @@ def render_brand_header(
                 <span class="dot-6"></span>
             </div>
             <div>
-                <div class="lift-brand-title">{safe_app_name}</div>
+                <div class="lift-brand-title">{safe_tagline}</div>
                 <div class="lift-brand-subtitle">{safe_author_line}</div>
+                <div class="lift-small-note">{safe_app_name}</div>
             </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_top_menu(supported_languages: List[str]) -> None:
+    """Render compact top navigation/help without changing the main workflow."""
+    with st.expander("Menu / Help", expanded=False):
+        st.markdown('<div class="lift-top-menu">', unsafe_allow_html=True)
+
+        current_language = st.session_state.get("language", "English")
+        language_index = (
+            supported_languages.index(current_language)
+            if current_language in supported_languages
+            else 0
+        )
+
+        language_choice = st.selectbox(
+            "Language",
+            supported_languages,
+            index=language_index,
+            key="top_language_select",
+        )
+        st.session_state["language"] = language_choice
+
+        tab_about, tab_safety, tab_workflow, tab_notes = st.tabs(
+            ["About LIFT", "Privacy / Safety", "How it works", "Evidence / Project notes"]
+        )
+
+        with tab_about:
+            st.markdown(
+                "LIFT Agent means Locate, Identify, Follow-up, Track. It helps organize "
+                "resource options, access barriers, outreach drafts, and next steps."
+            )
+
+        with tab_safety:
+            st.markdown(
+                "Use public information only. Nothing is sent automatically, and generated "
+                "outreach must be reviewed by a human before use."
+            )
+
+        with tab_workflow:
+            st.markdown(
+                "Start below with the need and location. LIFT checks consent, routes the "
+                "request, gathers public or fallback resources, and keeps a case record."
+            )
+
+        with tab_notes:
+            st.markdown(
+                "Project evidence and agent traces remain available in the sidebar and after "
+                "a plan is generated."
+            )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_start_cue() -> None:
+    """Render a clear cue before the visual content begins."""
+    st.markdown(
+        """
+        <div class="lift-start-cue">
+            Start below: tell LIFT what you need.
         </div>
         """,
         unsafe_allow_html=True,
@@ -497,9 +649,9 @@ def _load_animation_frames(
 def render_hover_animation(
     frame_dir: Path = ANIMATION_FRAME_DIR,
     frame_names: Optional[List[str]] = None,
-    width_px: int = 620,
-    height_px: int = 620,
-    frame_delay_ms: int = 260,
+    width_px: int = 430,
+    height_px: int = 430,
+    frame_delay_ms: int = 850,
 ) -> None:
     """
     Render a hover-triggered flipbook animation using real local image files.
@@ -551,12 +703,12 @@ def render_hover_animation(
             width: min({width_px}px, 96vw);
             height: min({height_px}px, 96vw);
             margin: 0 auto;
-            padding: 10px;
+            padding: 6px;
             box-sizing: border-box;
-            border-radius: 34px;
-            background: rgba(255, 255, 255, 0.56);
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.5);
             border: 1px solid rgba(255, 255, 255, 0.78);
-            box-shadow: 0 24px 72px rgba(14, 95, 115, 0.16);
+            box-shadow: 0 14px 42px rgba(14, 95, 115, 0.11);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -566,7 +718,7 @@ def render_hover_animation(
             width: 100%;
             height: 100%;
             object-fit: contain;
-            border-radius: 26px;
+            border-radius: 16px;
             cursor: pointer;
             display: block;
             transition: transform 220ms ease, filter 220ms ease;
@@ -654,6 +806,32 @@ def render_hover_animation(
     """
 
     components.html(component_html, height=height_px + 34, scrolling=False)
+
+
+def render_what_image(image_path: Path = WHAT_IMAGE_PATH) -> None:
+    """Render the clean LIFT information image immediately after the animation."""
+    if not image_path.is_file():
+        st.warning(f"Info image not found: `{image_path.as_posix()}`")
+        return
+
+    try:
+        image_data_uri = _encode_image_to_data_uri(image_path)
+    except Exception as exc:
+        st.warning(f"Info image was found but could not be loaded: {exc}")
+        return
+
+    st.markdown(
+        f"""
+        <div class="lift-what-wrap">
+            <img
+                class="lift-what-image"
+                src="{image_data_uri}"
+                alt="What LIFT helps with"
+            />
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_scroll_cta(

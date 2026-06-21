@@ -2706,9 +2706,12 @@ def main():
     )
 
     # Main, always-rendered, single scrolling page
+    ui.render_top_menu(supported_languages=SUPPORTED_LANGUAGES)
     ui.render_brand_header(app_name=APP_NAME, author_line="from Britney Katherine Lindsey")
+    ui.render_start_cue()
     ui.render_hover_animation()
-    ui.render_scroll_cta(target_anchor_id="lift-explainer-section", label="Let’s LIFT You Up")
+    ui.render_what_image()
+    ui.render_scroll_cta(target_anchor_id="lift-form-section", label="Scroll down to start your LIFT plan")
 
     ui.render_anchor("lift-explainer-section")
     ui.render_lift_explainer()
