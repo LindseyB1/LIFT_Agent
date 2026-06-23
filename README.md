@@ -1,10 +1,52 @@
-# LIFT Agent - Provider Matching & Warm Outreach Workflow
+# LIFT Agent - Human-Supervised Resource Navigation Agent
+
+## Current Agent Design
+
+LIFT Agent is a human-supervised autonomous resource navigation agent. It can search public provider information, check provider websites, generate mapped results, create outreach drafts, send approved emails through SMTP, and build follow-up tracker rows. LIFT does not place phone calls; phone calls remain a user action, but LIFT prepares the call plan and script.
+
+Real digital actions in the Streamlit app include:
+
+- Public resource search with OpenStreetMap Nominatim when available
+- Basic public provider website checks
+- Google Maps/geocoding when `GOOGLE_MAPS_API_KEY` is configured
+- Editable outreach email draft generation
+- Approved SMTP email sending after explicit human review
+- Tracker row creation and CSV export
+- Agent Activity Log entries with `completed`, `skipped`, `failed`, or `fallback used` status labels
+
+Phone-call limitation: LIFT does not call providers, monitor voicemail, scan inboxes, or claim that a provider was reached by phone. The call script is prepared for the user to review and use manually.
+
+Fallback behavior is action-specific. If an external API, SMTP server, or Google Maps key is unavailable, only that action is labeled as skipped, failed, or fallback used. The whole app should not be treated as a demo only because one integration is unavailable.
+
+## Secrets and Local Configuration
+
+Never hardcode credentials and never commit secrets. Configure these values in Streamlit secrets or environment variables:
+
+```toml
+OPENAI_API_KEY = "optional_openai_key"
+P3_DEFAULT_MODEL = "gpt-4o-mini"
+GOOGLE_MAPS_API_KEY = "optional_google_maps_key"
+SMTP_HOST = "smtp.example.com"
+SMTP_PORT = "587"
+SMTP_USER = "smtp_user"
+SMTP_PASSWORD = "smtp_password"
+SMTP_FROM = "verified-sender@example.com"
+```
+
+Run locally:
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The app opens at `http://localhost:8501`.
 
 ## Project Overview
 
 **LIFT Agent** (Locate. Identify. Follow-up. Track.) is an AI-supported provider matching and warm outreach workflow built for Project 3 in a Generative AI course.
 
-**LIFT is a draft tool using public external search data when available, with clearly labeled demo fallback data if the external API is unavailable.** It helps match users to resources, identify access barriers, draft outreach messages, and track follow-ups—all requiring human review and approval at every step.
+**LIFT uses public external search data when available, with clearly labeled fallback data only when a specific external action is unavailable.** It helps match users to resources, identify access barriers, draft outreach messages, send approved SMTP email, and track follow-ups with human review and approval.
 
 ### What LIFT Does
 
@@ -15,7 +57,7 @@
 
 ### What LIFT Does NOT Do
 
-- ❌ Send emails automatically
+- ❌ Send emails without explicit review and approval
 - ❌ Call providers
 - ❌ Monitor voicemail or scan inboxes
 - ❌ Store private case files without explicit consent
@@ -92,10 +134,10 @@ The app will open at `http://localhost:8501`.
 
 Before generating a plan, you **must** check all four required boxes:
 
-1. ☑ I understand this draft uses public external search data or clearly labeled demo fallback information only.
-2. ☑ I will not enter private, classified, restricted, protected, or sensitive personal information.
-3. ☑ I understand this app does not send emails, contact providers, scan inboxes, monitor phones, or access voicemail.
-4. ☑ I understand AI-generated outreach must be reviewed and approved by a human before use.
+1. I understand LIFT uses public resource data and provider website checks when available.
+2. I will not enter private, classified, restricted, protected, or sensitive personal information.
+3. I understand LIFT will not call providers or monitor voicemail.
+4. I understand any email must be reviewed and approved before sending.
 
 ### Step 1: Locate the Need
 
@@ -297,7 +339,7 @@ The current implementation performs real public HTTP requests when URLs are avai
 
 ### What LIFT Assumes
 
-- **Public data only:** Resource records come from public external search results when available, with clearly labeled demo fallback data if the API is unavailable.
+- **Public data only:** Resource records come from public external search results when available, with clearly labeled fallback data if that specific API is unavailable.
 - **Public information only:** No private, classified, restricted, protected, or sensitive personal information.
 - **No automation:** Nothing is sent or accessed automatically.
 - **Human approval required:** Every outreach draft requires human review before use.

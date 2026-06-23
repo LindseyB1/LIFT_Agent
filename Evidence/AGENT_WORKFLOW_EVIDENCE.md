@@ -1,5 +1,104 @@
 # LIFT Agent - Agentic Workflow Evidence
 
+## Current Human-Supervised Agent Loop
+
+LIFT Agent is a human-supervised autonomous resource navigation agent. The current app loop is:
+
+```text
+guided user intake -> selected agent actions -> public/external tool calls -> structured outputs -> human review -> optional approved SMTP send -> audit log and downloads
+```
+
+The app does not place phone calls. Phone calls remain a manual user action; LIFT prepares the call plan, call script, checklist, and tracker row.
+
+## Current Tool-Style Functions
+
+- `search_public_resources()` searches public provider/resource information and labels fallback data when external search is unavailable.
+- `check_provider_website()` performs basic public website checks through the existing MCP-style HTTP checker.
+- `geocode_provider_locations()` uses `GOOGLE_MAPS_API_KEY` from Streamlit secrets or environment variables when configured.
+- `render_google_map()` prepares mapped provider rows and Google Maps links when coordinates are available.
+- `generate_outreach_email()` creates a reviewed, editable outreach draft.
+- `send_email_smtp()` sends only approved email through SMTP credentials from secrets or environment variables.
+- `create_tracker_rows()` creates follow-up tracker rows for provider options.
+- `write_agent_audit_log()` stores the Agent Activity Log in Streamlit session state for display and CSV export.
+
+## Real-World Integrations
+
+- Public resource search: OpenStreetMap Nominatim public API.
+- Provider website check: public HTTP request only; no login, scripts, form submission, or restricted access.
+- Google Maps/geocoding: optional Google Maps Geocoding API using `GOOGLE_MAPS_API_KEY`.
+- Email: optional SMTP using `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM`.
+
+Secrets are never hardcoded and should not be committed.
+
+## Example Agent Activity Log
+
+| timestamp | action | status | data_source | message |
+| --- | --- | --- | --- | --- |
+| 2026-06-23 10:15:02 | User need received | completed | local/session data | The guided intake was submitted. |
+| 2026-06-23 10:15:03 | Public resource search started | completed | real external API/tool data | Searching public provider information with OpenStreetMap Nominatim. |
+| 2026-06-23 10:15:05 | Provider candidates found | completed | real external API/tool data | 5 provider candidate rows prepared. |
+| 2026-06-23 10:15:07 | Provider website checked | completed | real external API/tool data | Provider website status returned. |
+| 2026-06-23 10:15:08 | Provider locations geocoded | skipped | local/session data | GOOGLE_MAPS_API_KEY is not configured. Existing coordinates are kept when public search returned them. |
+| 2026-06-23 10:15:09 | Outreach email draft created | completed | local/session data | Editable outreach draft prepared for human review. |
+| 2026-06-23 10:15:09 | Tracker rows created | completed | local/session data | 5 tracker rows prepared. |
+| 2026-06-23 10:15:09 | SMTP email sending | skipped | local/session data | SMTP email is only sent from the review panel after explicit approval. |
+
+## Example Tracker Row
+
+```json
+{
+  "Case ID": "LIFT-20260623-001",
+  "Need Category": "Food / Basic Needs",
+  "User Need": "Food pantry near me",
+  "Resource Name": "Example Community Food Pantry",
+  "Contact Method": "Phone / Email / Website",
+  "Status": "Pending Outreach",
+  "Progress %": 10,
+  "Next Action": "Verify eligibility, hours, availability, and intake process.",
+  "Outcome": "",
+  "Notes": "Public search result; confirm before relying on this provider."
+}
+```
+
+## SMTP Approval Flow
+
+1. LIFT generates an outreach email draft.
+2. The user reviews and edits recipient, subject, and body.
+3. The user checks: `I reviewed and approve this email to be sent.`
+4. The user clicks `Send approved email`.
+5. `send_email_smtp()` checks SMTP secrets/environment variables.
+6. The Agent Activity Log records `completed`, `skipped`, or `failed`.
+
+Missing SMTP credentials produce a setup/skip message and do not crash the app.
+
+## Google Maps / Geocoding Flow
+
+1. LIFT uses provider addresses or public-search location strings.
+2. If `GOOGLE_MAPS_API_KEY` is configured, `geocode_provider_locations()` requests coordinates from Google Maps.
+3. Mapped rows include latitude, longitude, and Google Maps links when available.
+4. If the key is missing or an address is incomplete, the action is logged as skipped or failed, and available location text remains visible.
+
+## Failure and Fallback Handling
+
+Fallback is labeled at the action level:
+
+- `External resource search unavailable. Showing clearly labeled fallback resource examples.`
+- `GOOGLE_MAPS_API_KEY is not configured. Google geocoding skipped.`
+- `SMTP email sending skipped because approval was not provided.`
+- `SMTP email sending skipped because credentials are missing.`
+- `Provider website check failed for this provider; public contact details still need manual verification.`
+
+## Screenshot Placeholders
+
+Screenshots were not regenerated in this terminal session. Suggested screenshots:
+
+- Guided intake first screen with `Start your LIFT plan`
+- Action selection cards/checkboxes
+- Agent Activity Log
+- Provider Options and Map View
+- SMTP approval panel
+- Tracker Rows and Downloads
+
 **Project:** Project 3 - LIFT Agent (Locate, Identify, Follow-up, Track)  
 **Date:** June 14, 2026  
 **Purpose:** Document the agentic workflow and model-callable tool execution
@@ -393,5 +492,5 @@ LIFT Agent successfully demonstrates:
 ✅ **MCP-style structure** – Tool input/output documented  
 ✅ **Privacy-first design** – Consent up front, session-only option  
 
-This is a draft tool that teaches AI responsible development.
+This is a human-supervised agent that demonstrates responsible AI development.
 

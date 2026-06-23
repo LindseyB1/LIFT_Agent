@@ -91,8 +91,8 @@ def inject_global_styles() -> None:
         }}
 
         .block-container {{
-            padding-top: 0.65rem;
-            padding-bottom: 4rem;
+            padding-top: 0.45rem;
+            padding-bottom: 2.5rem;
             max-width: 1180px;
         }}
 
@@ -110,7 +110,7 @@ def inject_global_styles() -> None:
             margin: 0 0 0.45rem 0;
             background: {LIFT_COLORS['background']};
             border: 1px solid {LIFT_COLORS['border']};
-            border-radius: 14px;
+            border-radius: 12px;
         }}
 
         .lift-brand-logo {{
@@ -227,16 +227,16 @@ def inject_global_styles() -> None:
 
         .lift-scroll-wrap {{
             text-align: center;
-            margin: 0.45rem 0 1rem 0;
+            margin: 0.35rem 0 0.55rem 0;
         }}
 
         .lift-scroll-button {{
             display: inline-block;
-            background: linear-gradient(135deg, {LIFT_COLORS['teal']}, {LIFT_COLORS['deep_teal']});
+            background: #C9574D;
             color: #FFFFFF !important;
-            padding: 0.95rem 2.2rem;
+            padding: 0.78rem 1.45rem;
             border-radius: 999px;
-            font-size: 1.08rem;
+            font-size: 1rem;
             font-weight: 750;
             text-decoration: none !important;
             box-shadow: 0 14px 34px rgba(31, 122, 120, 0.25);
@@ -267,7 +267,7 @@ def inject_global_styles() -> None:
             min-height: 142px;
             background: rgba(255, 255, 255, 0.78);
             border: 1px solid {LIFT_COLORS['border']};
-            border-radius: 22px;
+            border-radius: 8px;
             padding: 1.1rem 1.15rem;
             margin-bottom: 0.85rem;
             box-shadow: 0 14px 40px rgba(36, 48, 47, 0.08);
@@ -309,7 +309,7 @@ def inject_global_styles() -> None:
         .lift-soft-card {{
             background: rgba(255, 255, 255, 0.78);
             border: 1px solid {LIFT_COLORS['border']};
-            border-radius: 22px;
+            border-radius: 8px;
             padding: 1rem 1.15rem;
             box-shadow: 0 12px 34px rgba(36, 48, 47, 0.07);
             margin: 0.6rem 0 1rem 0;
@@ -319,7 +319,7 @@ def inject_global_styles() -> None:
             background: rgba(255, 255, 255, 0.82);
             border: 1px solid {LIFT_COLORS['border']};
             border-left: 6px solid {LIFT_COLORS['muted_blue']};
-            border-radius: 18px;
+            border-radius: 8px;
             padding: 1rem 1.15rem;
             margin-bottom: 0.85rem;
             box-shadow: 0 12px 34px rgba(36, 48, 47, 0.07);
@@ -362,6 +362,31 @@ def inject_global_styles() -> None:
             color: {LIFT_COLORS['muted_text']} !important;
         }}
 
+        .stTextInput input,
+        .stTextArea textarea,
+        [data-baseweb="select"] > div,
+        [data-testid="stNumberInput"] input {{
+            background-color: #FFFFFF !important;
+            color: {LIFT_COLORS['text']} !important;
+            border-color: {LIFT_COLORS['border']} !important;
+        }}
+
+        .stButton > button,
+        [data-testid="stDownloadButton"] button {{
+            border-radius: 8px !important;
+        }}
+
+        .stButton > button[kind="primary"],
+        [data-testid="stDownloadButton"] button[kind="primary"] {{
+            background: #C9574D !important;
+            border-color: #C9574D !important;
+        }}
+
+        h1, h2, h3 {{
+            color: {LIFT_COLORS['deep_teal']} !important;
+            letter-spacing: 0 !important;
+        }}
+
         [data-testid="stExpander"] {{
             background: rgba(255, 255, 255, 0.72);
             border-color: {LIFT_COLORS['border']};
@@ -379,7 +404,7 @@ def inject_global_styles() -> None:
                 justify-content: flex-start;
                 align-items: center;
                 gap: 0.75rem;
-                padding: 0.55rem 0.65rem;
+                padding: 0.45rem 0.55rem;
             }}
 
             .lift-brand-logo {{
@@ -387,11 +412,29 @@ def inject_global_styles() -> None:
             }}
 
             .lift-brand-title {{
-                font-size: 1.18rem;
+                font-size: 1.05rem;
             }}
 
             .lift-brand-subtitle {{
-                font-size: 0.86rem;
+                font-size: 0.8rem;
+            }}
+
+            .block-container {{
+                padding-left: 0.85rem;
+                padding-right: 0.85rem;
+            }}
+
+            h1 {{
+                font-size: 1.55rem !important;
+            }}
+
+            h2, h3 {{
+                font-size: 1.18rem !important;
+                margin-top: 0.75rem !important;
+            }}
+
+            div[data-testid="stVerticalBlock"] {{
+                gap: 0.45rem;
             }}
 
             .lift-explainer-card {{
@@ -609,8 +652,8 @@ def render_safety_notice() -> None:
     """Compatibility safety notice from the earlier app."""
     st.info(
         "Use public information only. Do not enter private, classified, restricted, protected, "
-        "or sensitive information. This draft does not send emails, call providers, monitor phones, "
-        "access voicemail, or scan inboxes."
+        "or sensitive information. LIFT can send approved SMTP email only after review. "
+        "LIFT does not call providers, monitor voicemail, or scan inboxes."
     )
 
 
@@ -649,9 +692,9 @@ def _load_animation_frames(
 def render_hover_animation(
     frame_dir: Path = ANIMATION_FRAME_DIR,
     frame_names: Optional[List[str]] = None,
-    width_px: int = 430,
-    height_px: int = 430,
-    frame_delay_ms: int = 850,
+    width_px: int = 320,
+    height_px: int = 320,
+    frame_delay_ms: int = 1250,
 ) -> None:
     """
     Render a hover-triggered flipbook animation using real local image files.
@@ -721,7 +764,7 @@ def render_hover_animation(
             border-radius: 16px;
             cursor: pointer;
             display: block;
-            transition: transform 220ms ease, filter 220ms ease;
+            transition: transform 900ms ease, filter 900ms ease, opacity 700ms ease;
         }}
 
         #lift-hover-img:hover {{
@@ -737,6 +780,19 @@ def render_hover_animation(
             #lift-hover-img:hover {{
                 transform: none;
                 filter: none;
+            }}
+        }}
+
+        @media (max-width: 700px) {{
+            .lift-art-shell {{
+                width: min(240px, 82vw);
+                height: min(240px, 82vw);
+                padding: 4px;
+                border-radius: 14px;
+            }}
+
+            #lift-hover-img {{
+                border-radius: 10px;
             }}
         }}
         </style>
@@ -775,13 +831,17 @@ def render_hover_animation(
 
                     if (index >= frames.length) {{
                         index = frames.length - 1;
+                        img.style.opacity = "0.72";
                         img.src = frames[index];
+                        window.setTimeout(function() {{ img.style.opacity = "1"; }}, 220);
                         clearInterval(intervalId);
                         intervalId = null;
                         return;
                     }}
 
+                    img.style.opacity = "0.72";
                     img.src = frames[index];
+                    window.setTimeout(function() {{ img.style.opacity = "1"; }}, 220);
                 }}, {frame_delay_ms});
             }}
 
@@ -869,7 +929,7 @@ def render_lift_explainer() -> None:
     """Render a simple visual explanation of LIFT for non-technical users."""
     st.markdown(
         """
-        <h2 class="lift-section-title">What LIFT helps you do</h2>
+        <h2 class="lift-section-title">How LIFT Works</h2>
         <div class="lift-section-subtitle">
             Four simple steps: find options, understand barriers, prepare what to say, and track what happens next.
         </div>
@@ -986,10 +1046,10 @@ def render_advanced_sidebar(
         with st.expander("🎓 Demo / Class Project Notes", expanded=False):
             st.markdown(
                 """
-- This is a **Project 3 prototype** for a Generative AI course.
+- This is a **Project 3 human-supervised agent** for a Generative AI course.
 - LIFT means **Locate, Identify, Follow-up, Track**.
 - Public external data source: **OpenStreetMap / Nominatim**.
-- If public search returns no usable results, the app uses clearly labeled demo fallback data.
+- If public search returns no usable results, that action uses clearly labeled fallback data.
 - Provider details still need direct verification before real-world use.
 """
             )

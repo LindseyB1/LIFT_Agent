@@ -1,9 +1,12 @@
 import json
 import math
 import os
+import smtplib
 import socket
+import ssl
 import time
 from datetime import datetime
+from email.message import EmailMessage
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -1139,6 +1142,252 @@ def mcp_basic_provider_check(provider_name, website_url, category=None, location
     }
 
 
+def get_secret_or_env(name, default=""):
+    """Read a Streamlit secret first, then an environment variable."""
+    try:
+        value = st.secrets.get(name, "")
+        if value:
+            return str(value)
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+
+def log_agent_action(log_entries, action, status, data_source, message, detail=None):
+    entry = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "action": action,
+        "status": status,
+        "data_source": data_source,
+        "message": message,
+    }
+    if detail is not None:
+        entry["detail"] = detail
+    log_entries.append(entry)
+    return entry
+
+
+def search_public_resources(user_need, resource_category, primary_location, additional_locations, radius_miles, log_entries):
+    log_agent_action(
+        log_entries,
+        "Public resource search started",
+        "completed",
+        "real external API/tool data",
+        "Searching public provider information with OpenStreetMap Nominatim.",
+    )
+    resources_df, data_source_trace = fetch_external_resource_data(
+        user_need=user_need,
+        resource_category=resource_category,
+        primary_location=primary_location,
+        additional_locations=additional_locations,
+        radius_miles=radius_miles,
+    )
+    status = "fallback used" if data_source_trace.get("fallback_used") else "completed"
+    source = "fallback/demo data" if data_source_trace.get("fallback_used") else "real external API/tool data"
+    log_agent_action(
+        log_entries,
+        "Provider candidates found",
+        status,
+        source,
+        f"{data_source_trace.get('result_count', len(resources_df))} provider candidate rows prepared.",
+        data_source_trace,
+    )
+    return resources_df, data_source_trace
+
+
+def check_provider_website(provider, log_entries):
+    name = provider.get("resource_name") or provider.get("name") or "Provider"
+    website_url = provider.get("website") or provider.get("Website") or ""
+    check = mcp_basic_provider_check(
+        provider_name=name,
+        website_url=website_url,
+        category=provider.get("category", ""),
+        location=provider.get("city", provider.get("area_served", "")),
+        user_need=st.session_state.get("user_need", ""),
+    )
+    status = "completed" if check.get("website_status") == "active" else "fallback used"
+    data_source = "real external API/tool data" if check.get("http_status") else "local/session data"
+    log_agent_action(
+        log_entries,
+        "Provider website checked",
+        status,
+        data_source,
+        f"{name}: {check.get('website_status', 'unknown')}.",
+        check,
+    )
+    return check
+
+
+def google_maps_key_present():
+    return bool(get_secret_or_env("GOOGLE_MAPS_API_KEY"))
+
+
+def geocode_provider_locations(providers, log_entries):
+    api_key = get_secret_or_env("GOOGLE_MAPS_API_KEY")
+    if not api_key:
+        log_agent_action(
+            log_entries,
+            "Google geocoding",
+            "skipped",
+            "local/session data",
+            "GOOGLE_MAPS_API_KEY is not configured. Existing coordinates are kept when public search returned them.",
+        )
+        return providers, {"configured": False, "geocoded_count": 0, "errors": []}
+
+    geocoded = []
+    errors = []
+    for provider in providers:
+        updated = dict(provider)
+        query = (
+            updated.get("area_served")
+            or " ".join(
+                str(updated.get(part, ""))
+                for part in ["resource_name", "city", "state"]
+                if updated.get(part)
+            )
+        )
+        if not query.strip():
+            errors.append(f"{updated.get('resource_name', 'Provider')}: no mappable address.")
+            geocoded.append(updated)
+            continue
+        try:
+            params = urlencode({"address": query, "key": api_key})
+            url = f"https://maps.googleapis.com/maps/api/geocode/json?{params}"
+            request = Request(url, headers={"User-Agent": get_public_api_user_agent()})
+            with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if payload.get("status") == "OK" and payload.get("results"):
+                location = payload["results"][0]["geometry"]["location"]
+                updated["lat"] = float(location["lat"])
+                updated["lon"] = float(location["lng"])
+                updated["map_link"] = f"https://www.google.com/maps/search/?api=1&query={updated['lat']},{updated['lon']}"
+                updated["geocode_source"] = "Google Maps Geocoding API"
+            else:
+                errors.append(f"{updated.get('resource_name', 'Provider')}: {payload.get('status', 'unknown')}")
+        except Exception as error:
+            errors.append(f"{updated.get('resource_name', 'Provider')}: {type(error).__name__}: {error}")
+        geocoded.append(updated)
+        time.sleep(0.1)
+
+    count = sum(1 for provider in geocoded if provider.get("geocode_source") == "Google Maps Geocoding API")
+    status = "completed" if count else "failed"
+    log_agent_action(
+        log_entries,
+        "Provider locations geocoded",
+        status,
+        "real external API/tool data",
+        f"{count} provider location(s) geocoded with Google Maps.",
+        {"configured": True, "geocoded_count": count, "errors": errors},
+    )
+    return geocoded, {"configured": True, "geocoded_count": count, "errors": errors}
+
+
+def render_google_map(providers, log_entries):
+    mapped = []
+    for provider in providers:
+        try:
+            lat = float(provider.get("lat"))
+            lon = float(provider.get("lon"))
+            mapped.append(
+                {
+                    "resource_name": provider.get("resource_name", "Provider"),
+                    "lat": lat,
+                    "lon": lon,
+                    "map_link": provider.get("map_link") or f"https://www.google.com/maps/search/?api=1&query={lat},{lon}",
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+    if mapped:
+        log_agent_action(
+            log_entries,
+            "Google map generated",
+            "completed" if google_maps_key_present() else "fallback used",
+            "real external API/tool data" if google_maps_key_present() else "local/session data",
+            f"{len(mapped)} provider(s) available for map display.",
+        )
+    else:
+        log_agent_action(
+            log_entries,
+            "Google map generated",
+            "skipped",
+            "local/session data",
+            "No complete provider coordinates were available to map.",
+        )
+    return mapped
+
+
+def generate_outreach_email(user_need, provider, language_access_needed="No preference"):
+    provider_name = provider.get("resource_name") or provider.get("name") or "the provider"
+    category = provider.get("category", "resource support")
+    return {
+        "recipient": provider.get("group_email", "") if "@" in str(provider.get("group_email", "")) else "",
+        "subject": f"Resource Fit / Eligibility Confirmation - {category}",
+        "body": (
+            "Hello,\n\n"
+            f"I am reaching out to confirm whether {provider_name} may be a fit for someone seeking support related to: {user_need}\n\n"
+            "Could you please confirm:\n"
+            "1. Whether your program currently provides this type of support\n"
+            "2. Eligibility requirements, including location, age, income, military/veteran/family status, or documentation\n"
+            "3. Current hours and whether after-hours or remote options exist\n"
+            "4. Best intake method: phone, email, website, walk-in, appointment, or referral\n"
+            "5. Whether transportation or in-person attendance is required\n"
+            f"6. Whether {language_access_needed} language support or interpreter support is available\n\n"
+            "I am not asking for a referral through this message yet. I am only trying to verify fit, availability, and next steps.\n\n"
+            "Thank you."
+        ),
+    }
+
+
+def send_email_smtp(to_address, subject, body):
+    required = {
+        "SMTP_HOST": get_secret_or_env("SMTP_HOST"),
+        "SMTP_PORT": get_secret_or_env("SMTP_PORT", "587"),
+        "SMTP_USER": get_secret_or_env("SMTP_USER"),
+        "SMTP_PASSWORD": get_secret_or_env("SMTP_PASSWORD"),
+        "SMTP_FROM": get_secret_or_env("SMTP_FROM"),
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        return {"sent": False, "status": "skipped", "message": f"Missing SMTP configuration: {', '.join(missing)}"}
+    if not to_address or "@" not in to_address:
+        return {"sent": False, "status": "skipped", "message": "Recipient email address is missing or invalid."}
+
+    message = EmailMessage()
+    message["From"] = required["SMTP_FROM"]
+    message["To"] = to_address
+    message["Subject"] = subject
+    message.set_content(body)
+
+    try:
+        port = int(required["SMTP_PORT"])
+        context = ssl.create_default_context()
+        with smtplib.SMTP(required["SMTP_HOST"], port, timeout=HTTP_TIMEOUT_SECONDS) as server:
+            server.starttls(context=context)
+            server.login(required["SMTP_USER"], required["SMTP_PASSWORD"])
+            server.send_message(message)
+        return {"sent": True, "status": "completed", "message": "Approved email sent by SMTP."}
+    except Exception as error:
+        return {"sent": False, "status": "failed", "message": f"{type(error).__name__}: {error}"}
+
+
+def create_tracker_rows(tool_result, log_entries):
+    rows = tool_result.get("tracker_rows", [])
+    log_agent_action(
+        log_entries,
+        "Tracker rows created",
+        "completed" if rows else "skipped",
+        "local/session data",
+        f"{len(rows)} tracker row(s) prepared.",
+    )
+    return rows
+
+
+def write_agent_audit_log(log_entries):
+    st.session_state["agent_activity_log"] = log_entries
+    return log_entries
+
+
 LOCATION_COORDS = {
     "grand rapids, mi": (42.9634, -85.6681),
     "walker, mi": (43.0014, -85.7681),
@@ -1748,16 +1997,17 @@ def build_demo_report(tool_result, route_trace):
 
 def init_session_state():
     """Initialize required session state variables for consent and privacy."""
-    if "consent_synthetic_data" not in st.session_state:
-        st.session_state["consent_synthetic_data"] = False
-    if "consent_no_sensitive_data" not in st.session_state:
-        st.session_state["consent_no_sensitive_data"] = False
-    if "consent_no_automation" not in st.session_state:
-        st.session_state["consent_no_automation"] = False
-    if "consent_human_approval" not in st.session_state:
-        st.session_state["consent_human_approval"] = False
+    for key in [
+        "consent_public_data",
+        "consent_outputs",
+        "consent_no_phone",
+        "consent_agent_actions",
+        "consent_email_review",
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = False
     if "privacy_session_only" not in st.session_state:
-        st.session_state["privacy_session_only"] = False
+        st.session_state["privacy_session_only"] = True
     if "privacy_include_notes" not in st.session_state:
         st.session_state["privacy_include_notes"] = True
     if "privacy_allow_website_checks" not in st.session_state:
@@ -1772,16 +2022,49 @@ def init_session_state():
         st.session_state["case_history"] = []
     if "current_case_record" not in st.session_state:
         st.session_state["current_case_record"] = {}
+    if "need_text" not in st.session_state:
+        st.session_state["need_text"] = ""
+    if "agent_activity_log" not in st.session_state:
+        st.session_state["agent_activity_log"] = []
 
 
 def render_privacy_consent_section():
     """Render the Privacy, Consent, and User Control section."""
+    st.subheader("Required Consent Before Agent Actions")
+    labels = [
+        ("consent_public_data", "I understand LIFT uses public resource data and provider website checks when available."),
+        ("consent_outputs", "I understand LIFT may generate outreach drafts, tracker rows, and mapped provider results."),
+        ("consent_no_phone", "I understand LIFT will not call providers or monitor voicemail."),
+        ("consent_agent_actions", "I approve LIFT to perform the selected agent actions."),
+        ("consent_email_review", "I understand any email must be reviewed and approved before sending."),
+    ]
+    for key, label in labels:
+        st.session_state[key] = st.checkbox(label, value=st.session_state.get(key, False), key=f"{key}_check")
+
+    all_consents_checked = all(st.session_state.get(key, False) for key, _ in labels)
+
+    st.markdown("**Privacy Settings**")
+    st.markdown(
+        """
+- Session-only output history: On
+- Include privacy and consent notes in generated plan: On
+- Allow basic public provider website checks: On
+"""
+    )
+    st.session_state["privacy_session_only"] = True
+    st.session_state["privacy_include_notes"] = True
+    st.session_state["privacy_allow_website_checks"] = True
+
+    if not all_consents_checked:
+        st.info("Check all required consent boxes to enable Generate LIFT Plan.")
+    return all_consents_checked
+
     st.header(t("Privacy, Consent, and User Control"))
     
     st.markdown(
         """
-**LIFT Agent is a draft tool using public external search data when available, with clearly labeled demo fallback data if the external API is unavailable.** 
-This app does not send emails, call providers, monitor voicemail, scan inboxes, or store case files without your explicit consent and approval at every step.
+**LIFT Agent uses public external search data when available, with clearly labeled fallback data if a specific external action is unavailable.**
+LIFT can send approved SMTP email only after human review. LIFT does not call providers, monitor voicemail, or scan inboxes.
         """
     )
     
@@ -1793,7 +2076,7 @@ This app does not send emails, call providers, monitor voicemail, scan inboxes, 
         st.write("")
     with col2:
         st.session_state["consent_synthetic_data"] = st.checkbox(
-            "☑ I understand this draft uses public external search data or clearly labeled demo fallback information only.",
+            "I understand LIFT uses public external search data or clearly labeled fallback information when needed.",
             value=st.session_state.get("consent_synthetic_data", False),
             key="consent_synthetic_check"
         )
@@ -1803,7 +2086,7 @@ This app does not send emails, call providers, monitor voicemail, scan inboxes, 
         st.write("")
     with col2:
         st.session_state["consent_no_sensitive_data"] = st.checkbox(
-            "☑ I will not enter private, classified, restricted, protected, or sensitive personal information.",
+            "I will not enter private, classified, restricted, protected, or sensitive personal information.",
             value=st.session_state.get("consent_no_sensitive_data", False),
             key="consent_no_sensitive_check"
         )
@@ -1813,7 +2096,7 @@ This app does not send emails, call providers, monitor voicemail, scan inboxes, 
         st.write("")
     with col2:
         st.session_state["consent_no_automation"] = st.checkbox(
-            "☑ I understand this app does not send emails, contact providers, scan inboxes, monitor phones, or access voicemail.",
+            "I understand LIFT does not call providers, monitor voicemail, or scan inboxes.",
             value=st.session_state.get("consent_no_automation", False),
             key="consent_no_automation_check"
         )
@@ -1823,7 +2106,7 @@ This app does not send emails, call providers, monitor voicemail, scan inboxes, 
         st.write("")
     with col2:
         st.session_state["consent_human_approval"] = st.checkbox(
-            "☑ I understand AI-generated outreach must be reviewed and approved by a human before use.",
+            "I understand AI-generated outreach must be reviewed and approved by a human before use.",
             value=st.session_state.get("consent_human_approval", False),
             key="consent_human_approval_check"
         )
@@ -1867,13 +2150,537 @@ This app does not send emails, call providers, monitor voicemail, scan inboxes, 
 def render_privacy_notice():
     st.info(
         "Use public information only. Do not enter private, classified, restricted, protected, "
-        "or sensitive information. This draft does not send emails, monitor phones, access voicemail, or scan inboxes."
+        "or sensitive information. LIFT can send approved SMTP email only after review. "
+        "LIFT does not call providers, monitor voicemail, or scan inboxes."
     )
 
 
 def render_generate_page():
     language = current_language()
     language_access_needed = st.session_state.get("language_access_needed", "No preference")
+
+    st.markdown(
+        "LIFT Agent is a human-supervised autonomous resource navigation agent. It can search public provider information, "
+        "check provider websites, generate mapped results, create outreach drafts, send approved emails through SMTP, and "
+        "build follow-up tracker rows. LIFT does not place phone calls; phone calls remain a user action, but LIFT prepares "
+        "the call plan and script."
+    )
+
+    st.header("1. Tell LIFT what you need")
+    st.caption("You can write messy. LIFT will organize it.")
+
+    examples = [
+        "Food pantry near me",
+        "Emergency shelter",
+        "Help with utility bill",
+        "Transportation to appointments",
+        "Veteran housing support",
+        "Legal aid",
+        "Childcare help",
+    ]
+    chip_cols = st.columns(4)
+    for idx, example in enumerate(examples):
+        with chip_cols[idx % 4]:
+            if st.button(example, key=f"need_chip_{idx}", use_container_width=True):
+                st.session_state["need_text"] = example
+
+    user_need = st.text_area(
+        "What do you need help with?",
+        key="need_text",
+        placeholder="Example: I need a food pantry near Grand Rapids, but I work third shift and have limited transportation.",
+        height=118,
+    )
+    st.session_state["user_need"] = user_need
+
+    intake_cols = st.columns([1, 1])
+    with intake_cols[0]:
+        resource_category = st.selectbox(
+            get_text("Resource category", language),
+            [
+                "Any / Not Sure",
+                "Food / Basic Needs",
+                "Housing / Utilities",
+                "Financial Assistance",
+                "Transportation",
+                "Legal / Administrative",
+                "Behavioral Health",
+                "Emergency / 24-7 Crisis",
+                "Veteran / Service Member Support",
+                "Family Readiness / FRG",
+                "General Support / 24-7 Navigation",
+            ],
+        )
+    with intake_cols[1]:
+        urgency = st.selectbox(get_text("Urgency", language), ["Routine", "Soon", "Urgent", "Crisis / immediate"])
+
+    st.header("2. Identify location and access limits")
+    loc_col1, loc_col2, loc_col3 = st.columns(3)
+    with loc_col1:
+        primary_location = st.text_input(get_text("Primary search location", language), value="Grand Rapids, MI")
+    with loc_col2:
+        additional_locations_text = st.text_input(
+            get_text("Additional locations", language),
+            placeholder="Walker, MI; Kentwood, MI; Wyoming, MI",
+        )
+    with loc_col3:
+        radius_miles = st.slider(get_text("Search radius in miles", language), 5, 100, 25, step=5)
+
+    additional_locations = [
+        item.strip()
+        for item in additional_locations_text.replace(",", ";").split(";")
+        if item.strip()
+    ]
+
+    st.header("3. Fit and eligibility context")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        audience = st.selectbox(
+            "User type",
+            [
+                "Service member",
+                "Veteran",
+                "Military-connected family",
+                "Caregiver",
+                "Dependent",
+                "Community member",
+                "Not sure",
+            ],
+        )
+    with c2:
+        transportation = st.selectbox("Transportation", ["Yes", "No", "Limited", "Public transit only"])
+    with c3:
+        needs_24_7 = st.selectbox("Needs 24/7 or after-hours option?", ["No", "Yes", "Not sure"])
+    with c4:
+        documents_available = st.selectbox("Documents available?", ["Yes", "No", "Not sure"])
+
+    context = {
+        "audience": audience,
+        "transportation": transportation,
+        "needs_24_7": needs_24_7,
+        "documents_available": documents_available,
+        "urgency": urgency,
+        "display_language": language,
+        "language_access_needed": language_access_needed,
+    }
+
+    with st.expander(get_text("Optional Context", language), expanded=False):
+        st.caption(get_text("Select only what you are comfortable sharing. This helps match better resources.", language))
+        optional_labels = [
+            "Veteran",
+            "Disabled Veteran",
+            "Military family",
+            "Single parent",
+            "Parent/caregiver",
+            "Pregnant/postpartum",
+            "Student",
+            "Senior",
+            "Youth/young adult",
+            "Housing unstable",
+            "No transportation",
+            "Low/no income",
+            "Uninsured",
+            "Food insecure",
+            "Legal help",
+            "Reentry support",
+            "Spanish services",
+            "LGBTQIA+ affirming",
+            "Disability resources",
+            "After-hours services",
+        ]
+        selected_optional = []
+        opt_cols = st.columns(3)
+        for idx, label in enumerate(optional_labels):
+            if opt_cols[idx % 3].checkbox(label, key=f"guided_optctx_{idx}"):
+                selected_optional.append(label)
+    st.session_state["optional_context"] = selected_optional
+    context["optional_context"] = selected_optional
+
+    st.header("4. Choose agent actions")
+    st.caption("Choose what LIFT should do:")
+    action_cols = st.columns(3)
+    with action_cols[0]:
+        st.markdown("**Find**")
+        act_search = st.checkbox("Search public provider options", value=True, key="act_search")
+        act_websites = st.checkbox("Check provider websites", value=True, key="act_websites")
+        act_map = st.checkbox("Show Google map", value=True, key="act_map")
+    with action_cols[1]:
+        st.markdown("**Plan**")
+        act_fit = st.checkbox("Create resource fit summary", value=True, key="act_fit")
+        act_gaps = st.checkbox("Identify barriers and gaps", value=True, key="act_gaps")
+        act_backup = st.checkbox("Create three backup options", value=True, key="act_backup")
+    with action_cols[2]:
+        st.markdown("**Follow up**")
+        act_email = st.checkbox("Generate email draft", value=True, key="act_email")
+        act_call = st.checkbox("Generate call script", value=True, key="act_call")
+        act_tracker = st.checkbox("Create tracker rows", value=True, key="act_tracker")
+        act_csv = st.checkbox("Create CSV tracker download", value=True, key="act_csv")
+        act_smtp = st.checkbox("Send approved email by SMTP", value=False, key="act_smtp")
+
+    selected_outputs = []
+    if act_fit:
+        selected_outputs.append("Resource fit summary")
+    if act_gaps:
+        selected_outputs.append("Gap analysis")
+    if act_backup:
+        selected_outputs.append("Three contingency plans")
+    if act_email:
+        selected_outputs.append("User-approved outreach draft")
+    if act_tracker:
+        selected_outputs.append("Tracker rows")
+    if act_map:
+        selected_outputs.append("Map view")
+    if act_csv:
+        selected_outputs.append("CSV tracker download")
+
+    all_consents_checked = render_privacy_consent_section()
+
+    api_key = get_openai_api_key()
+    if not api_key:
+        st.info("OPENAI_API_KEY is not configured. LIFT will still run the local agent workflow and label any fallback data.")
+    if act_map and not google_maps_key_present():
+        st.info("GOOGLE_MAPS_API_KEY is not configured. Google geocoding will be skipped; existing public-search coordinates may still be shown when available.")
+    if act_smtp:
+        smtp_missing = [
+            name
+            for name in ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"]
+            if not get_secret_or_env(name)
+        ]
+        if smtp_missing:
+            st.info("SMTP email sending is selected but not configured. Missing: " + ", ".join(smtp_missing))
+
+    generate = st.button(
+        get_text("Generate LIFT Plan", language),
+        type="primary",
+        use_container_width=True,
+        disabled=not all_consents_checked,
+    )
+
+    if generate:
+        if not user_need.strip():
+            st.error("Enter a resource need first.")
+            st.stop()
+
+        input_errors, input_warnings = validate_user_input(user_need)
+        for warning in input_warnings:
+            st.warning(warning)
+        if input_errors:
+            for input_error in input_errors:
+                st.error(input_error)
+            st.stop()
+
+        agent_log = []
+        log_agent_action(agent_log, "User need received", "completed", "local/session data", "The guided intake was submitted.")
+
+        retrieval_trace = retrieve_curated_context(
+            user_need=user_need,
+            resource_category=resource_category,
+            context=context,
+        )
+        context["retrieval_trace"] = retrieval_trace
+
+        interpreted_intent = infer_intent_fallback(
+            user_need=user_need,
+            resource_category=resource_category,
+            primary_location=primary_location,
+            context=context,
+        )
+        if api_key and OPENAI_AVAILABLE:
+            try:
+                interpreted_intent = llm_interpret_request(
+                    client=get_openai_client(),
+                    user_need=user_need,
+                    resource_category=resource_category,
+                    primary_location=primary_location,
+                    additional_locations=additional_locations,
+                    radius_miles=radius_miles,
+                    context=context,
+                )
+                log_agent_action(agent_log, "Fit and intent interpreted", "completed", "real external API/tool data", "OpenAI interpretation completed.")
+            except Exception as error:
+                interpreted_intent["interpretation_warning"] = f"Live LLM interpretation failed; fallback interpretation used: {type(error).__name__}"
+                log_agent_action(agent_log, "Fit and intent interpreted", "fallback used", "local/session data", interpreted_intent["interpretation_warning"])
+        else:
+            log_agent_action(agent_log, "Fit and intent interpreted", "fallback used", "local/session data", "Local interpretation used because OPENAI_API_KEY is unavailable.")
+
+        context["interpreted_intent"] = interpreted_intent
+        effective_resource_category = resource_category
+        if resource_category == "Any / Not Sure" and interpreted_intent.get("need_type") in [
+            "Food / Basic Needs",
+            "Housing / Utilities",
+            "Financial Assistance",
+            "Transportation",
+            "Legal / Administrative",
+            "Behavioral Health",
+            "Emergency / 24-7 Crisis",
+            "Veteran / Service Member Support",
+            "Family Readiness / FRG",
+            "General Support / 24-7 Navigation",
+        ]:
+            effective_resource_category = interpreted_intent["need_type"]
+
+        if act_search:
+            resources_df, data_source_trace = search_public_resources(
+                user_need,
+                effective_resource_category,
+                primary_location,
+                additional_locations,
+                radius_miles,
+                agent_log,
+            )
+        else:
+            resources_df = pd.DataFrame(synthetic_resource_data())
+            data_source_trace = {"data_source": "Local fallback examples", "fallback_used": True, "result_count": len(resources_df)}
+            log_agent_action(agent_log, "Public resource search started", "skipped", "local/session data", "User did not select public provider search.")
+
+        resource_data = resources_df.to_dict(orient="records")
+
+        with st.spinner("Running LIFT agent actions..."):
+            if api_key and OPENAI_AVAILABLE:
+                try:
+                    final_text, route_trace, tool_trace, tool_result = run_live_llm_tool_workflow(
+                        user_need=user_need,
+                        resource_category=effective_resource_category,
+                        primary_location=primary_location,
+                        additional_locations=additional_locations,
+                        radius_miles=radius_miles,
+                        context=context,
+                        selected_outputs=selected_outputs,
+                        resource_data=resource_data,
+                        data_source_trace=data_source_trace,
+                    )
+                    log_agent_action(agent_log, "Fit and gap analysis completed", "completed", "real external API/tool data", "OpenAI tool workflow completed.")
+                except Exception as error:
+                    route_trace = demo_route_decision(user_need, effective_resource_category, context)
+                    tool_result = analyze_resource_gaps_and_build_contingency_plan(
+                        user_need,
+                        effective_resource_category,
+                        primary_location,
+                        additional_locations,
+                        radius_miles,
+                        context,
+                        selected_outputs,
+                        resource_data,
+                    )
+                    tool_trace = {"tool_name": "analyze_resource_gaps_and_build_contingency_plan", "tool_mode": "Local fallback after live workflow failure"}
+                    final_text = build_demo_report(tool_result, route_trace)
+                    log_agent_action(agent_log, "Fit and gap analysis completed", "fallback used", "local/session data", f"Live workflow failed: {type(error).__name__}")
+            else:
+                route_trace = demo_route_decision(user_need, effective_resource_category, context)
+                tool_result = analyze_resource_gaps_and_build_contingency_plan(
+                    user_need,
+                    effective_resource_category,
+                    primary_location,
+                    additional_locations,
+                    radius_miles,
+                    context,
+                    selected_outputs,
+                    resource_data,
+                )
+                tool_trace = {"tool_name": "analyze_resource_gaps_and_build_contingency_plan", "tool_mode": "Local agent workflow"}
+                final_text = build_demo_report(tool_result, route_trace)
+                log_agent_action(agent_log, "Fit and gap analysis completed", "completed", "local/session data", "Local LIFT tool created fit, gap, backup, outreach, and tracker outputs.")
+
+            provider_records = tool_result.get("matched_resources", [])
+            provider_checks = []
+            if act_websites:
+                for provider in provider_records[:5]:
+                    provider_checks.append(check_provider_website(provider, agent_log))
+            else:
+                log_agent_action(agent_log, "Provider websites checked", "skipped", "local/session data", "User did not select provider website checks.")
+
+            if act_map:
+                mapped_providers, geocode_trace = geocode_provider_locations(provider_records, agent_log)
+                map_rows = render_google_map(mapped_providers, agent_log)
+                tool_result["matched_resources"] = mapped_providers
+            else:
+                geocode_trace = {"configured": google_maps_key_present(), "geocoded_count": 0, "errors": []}
+                map_rows = []
+                log_agent_action(agent_log, "Google map generated", "skipped", "local/session data", "User did not select map output.")
+
+            if act_email:
+                first_provider = tool_result.get("matched_resources", [{}])[0] if tool_result.get("matched_resources") else {}
+                email_draft = generate_outreach_email(user_need, first_provider, language_access_needed)
+                tool_result["smtp_email_draft"] = email_draft
+                log_agent_action(agent_log, "Outreach email draft created", "completed", "local/session data", "Editable outreach draft prepared for human review.")
+            else:
+                tool_result["smtp_email_draft"] = {"recipient": "", "subject": "", "body": ""}
+                log_agent_action(agent_log, "Outreach email draft created", "skipped", "local/session data", "User did not select email draft generation.")
+
+            if act_call:
+                log_agent_action(agent_log, "Call script created", "completed", "local/session data", "Manual phone-call script prepared. LIFT did not call providers.")
+            else:
+                log_agent_action(agent_log, "Call script created", "skipped", "local/session data", "User did not select call script generation.")
+
+            if act_tracker:
+                create_tracker_rows(tool_result, agent_log)
+            else:
+                tool_result["tracker_rows"] = []
+                log_agent_action(agent_log, "Tracker rows created", "skipped", "local/session data", "User did not select tracker rows.")
+
+            log_agent_action(agent_log, "SMTP email sending", "skipped", "local/session data", "SMTP email is only sent from the review panel after explicit approval.")
+            write_agent_audit_log(agent_log)
+
+            st.session_state["route_trace"] = route_trace
+            st.session_state["tool_trace"] = tool_trace
+            st.session_state["tool_result"] = tool_result
+            st.session_state["data_source_trace"] = data_source_trace
+            st.session_state["retrieval_trace"] = retrieval_trace
+            st.session_state["interpreted_intent"] = interpreted_intent
+            st.session_state["provider_checks"] = provider_checks
+            st.session_state["map_rows"] = map_rows
+            st.session_state["geocode_trace"] = geocode_trace
+            st.session_state["final_text"] = final_text
+            st.session_state["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if st.session_state.get("tool_result"):
+        st.divider()
+        st.header("Results")
+        translation_safety_note()
+
+        log_df = pd.DataFrame(st.session_state.get("agent_activity_log", []))
+        with st.container(border=True):
+            st.subheader("Agent Activity Log")
+            if not log_df.empty:
+                st.dataframe(log_df[["timestamp", "action", "status", "data_source", "message"]], use_container_width=True)
+
+        tool_result = st.session_state["tool_result"]
+        matched_df = pd.DataFrame(tool_result.get("matched_resources", []))
+
+        with st.container(border=True):
+            st.subheader("Resource Fit Summary")
+            st.write(f"Best place to start: **{tool_result.get('recommended_first_resource', 'No match yet')}**")
+            for item in tool_result.get("fit_concerns", []):
+                st.markdown(f"- {item}")
+
+        with st.container(border=True):
+            st.subheader("Provider Options")
+            if matched_df.empty:
+                st.info("No provider options were prepared.")
+            else:
+                display_cols = [
+                    col
+                    for col in [
+                        "resource_name",
+                        "category",
+                        "city",
+                        "business_hours",
+                        "phone",
+                        "group_email",
+                        "website",
+                        "eligibility",
+                        "status",
+                        "distance_miles",
+                        "map_link",
+                    ]
+                    if col in matched_df.columns
+                ]
+                st.dataframe(matched_df[display_cols], use_container_width=True)
+                if st.session_state.get("provider_checks"):
+                    with st.expander("Provider website check details", expanded=False):
+                        st.json(st.session_state["provider_checks"])
+
+        with st.container(border=True):
+            st.subheader("Map View")
+            map_rows = st.session_state.get("map_rows", [])
+            if map_rows:
+                st.map(pd.DataFrame(map_rows).rename(columns={"lon": "longitude", "lat": "latitude"}))
+                for row in map_rows:
+                    st.markdown(f"- [{row['resource_name']}]({row['map_link']})")
+            else:
+                st.info("No mapped provider results are available for this run.")
+            if st.session_state.get("geocode_trace", {}).get("errors"):
+                with st.expander("Location notes", expanded=False):
+                    st.write(st.session_state["geocode_trace"]["errors"])
+
+        with st.container(border=True):
+            st.subheader("Gap Analysis")
+            gap_items = (
+                tool_result.get("access_barriers", [])
+                + tool_result.get("eligibility_barriers", [])
+                + tool_result.get("twenty_four_seven_gaps", [])
+                + tool_result.get("validation_flags", [])
+            )
+            for item in gap_items or ["No major gap found in the available data. Confirm details directly before relying on any provider."]:
+                st.markdown(f"- {item}")
+
+        with st.container(border=True):
+            st.subheader("Backup Options")
+            for plan in tool_result.get("contingency_plans", []):
+                st.markdown(f"**{plan['plan']}: {plan['title']}**")
+                for step in plan["steps"]:
+                    st.markdown(f"- {step}")
+
+        with st.container(border=True):
+            st.subheader("Outreach Email Draft")
+            draft = tool_result.get("smtp_email_draft", {})
+            email_to = st.text_input("Recipient email", value=draft.get("recipient", ""), key="smtp_to")
+            email_subject = st.text_input("Subject", value=draft.get("subject", ""), key="smtp_subject")
+            email_body = st.text_area("Editable email body", value=draft.get("body", ""), height=220, key="smtp_body")
+            if act_smtp:
+                approved = st.checkbox("I reviewed and approve this email to be sent.", key="smtp_approved")
+                if st.button("Send approved email", type="primary", use_container_width=True, key="send_approved_email"):
+                    if not approved:
+                        st.error("Review and approval are required before sending.")
+                    else:
+                        result = send_email_smtp(email_to, email_subject, email_body)
+                        status = result.get("status", "failed")
+                        log_agent_action(
+                            st.session_state["agent_activity_log"],
+                            "SMTP email sending",
+                            status,
+                            "real external API/tool data" if status == "completed" else "local/session data",
+                            result.get("message", ""),
+                        )
+                        if result.get("sent"):
+                            st.success(result["message"])
+                        else:
+                            st.warning(result["message"])
+            else:
+                st.caption("SMTP sending is off by default. Select Send approved email by SMTP before generating a plan to enable the send review controls.")
+
+        with st.container(border=True):
+            st.subheader("Call Script")
+            first_provider = tool_result.get("matched_resources", [{}])[0] if tool_result.get("matched_resources") else {}
+            call_script = (
+                "LIFT does not place phone calls. This script is prepared for the user to review and use when calling.\n\n"
+                f"Hi, is this {first_provider.get('resource_name', 'the provider')}? I am calling to verify a few things:\n\n"
+                "1. Do you currently provide this type of support?\n"
+                "2. What are the key eligibility requirements?\n"
+                "3. What are your hours, and do you have after-hours options?\n"
+                "4. Is an appointment, referral, or application required?\n"
+                "5. What documents should the person bring or prepare?\n"
+                f"6. Do you have {language_access_needed} language support or interpreter access?\n\n"
+                "Thank you. I am gathering accurate next-step information before someone relies on this resource."
+            )
+            st.text_area("Manual call script", value=call_script, height=210)
+
+        with st.container(border=True):
+            st.subheader("Tracker Rows")
+            tracker_df = pd.DataFrame(tool_result.get("tracker_rows", []))
+            if tracker_df.empty:
+                st.info("No tracker rows were created for this run.")
+            else:
+                st.dataframe(tracker_df, use_container_width=True)
+
+        with st.container(border=True):
+            st.subheader("Downloads")
+            if not tracker_df.empty:
+                st.download_button(
+                    "Download Tracker CSV",
+                    data=tracker_df.to_csv(index=False),
+                    file_name=f"lift_tracker_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            st.download_button(
+                "Download Agent Activity Log CSV",
+                data=log_df.to_csv(index=False),
+                file_name=f"lift_agent_activity_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+    return
 
     all_consents_checked = render_privacy_consent_section()
     st.divider()
@@ -2592,35 +3399,20 @@ def render_about_page():
         """
 **LIFT Agent** stands for **Locate. Identify. Follow-up. Track.**
 
-This Project 3 draft is not a generic chatbot and not a static resource list. It is designed to show an agentic workflow:
+LIFT Agent is a human-supervised autonomous resource navigation agent. It can search public provider information, check public provider websites, generate mapped results, create outreach drafts, send approved emails through SMTP, and build follow-up tracker rows.
 
-1. The user enters a resource need.
-2. The app collects location, radius, eligibility, and access context.
-3. The LLM selects a route when an API key is available.
-4. The model calls a custom tool.
-5. The tool generates resource matches, barriers, contingency options, outreach drafts, tracker rows, and system gap notes.
-6. The user remains the approval layer before any outreach is used.
+Phone calls remain manual. LIFT does not place phone calls, monitor voicemail, scan inboxes, or claim that it reached a provider by phone. It prepares the call plan, script, checklist, and tracker row for the user.
 
-### What this draft does
+### What LIFT Does
 
 - Uses public external search data when available
 - Supports multiple locations and radius-based matching
-- Separates 24/7 support from business-hours resources
+- Checks public provider websites when selected
+- Uses Google Maps/geocoding when configured
 - Flags transportation, documentation, eligibility, and validation barriers
 - Generates user-approved outreach drafts
-- Generates tracker rows and CSV downloads
-- Shows visible route and tool traces
-
-### What this draft does not do
-
-- It does not send emails
-- It does not call providers
-- It does not monitor voicemail
-- It does not scan inboxes
-- It does not store private case files
-- It does not claim real-world verification
-
-Future versions could add consent-based integrations, login, role-based access, audit logs, limited permissions, and data retention controls.
+- Sends approved SMTP email only after explicit review and approval
+- Generates tracker rows, CSV downloads, and agent activity logs
 """
     )
 
@@ -2705,26 +3497,49 @@ def main():
         api_key_present=bool(get_openai_api_key()),
     )
 
-    # Main, always-rendered, single scrolling page
-    ui.render_top_menu(supported_languages=SUPPORTED_LANGUAGES)
+    # Main guided intake page
     ui.render_brand_header(app_name=APP_NAME, author_line="from Britney Katherine Lindsey")
-    ui.render_start_cue()
-    ui.render_hover_animation()
-    ui.render_what_image()
-    ui.render_scroll_cta(target_anchor_id="lift-form-section", label="Scroll down to start your LIFT plan")
-
-    ui.render_anchor("lift-explainer-section")
-    ui.render_lift_explainer()
-
+    ui.render_scroll_cta(target_anchor_id="lift-form-section", label="Start your LIFT plan")
+    st.markdown("A guided plan for finding resource options, checking barriers, preparing outreach, and tracking next steps.")
     ui.render_anchor("lift-form-section")
     render_generate_page()
 
     st.divider()
+    with st.expander("How LIFT Works", expanded=False):
+        st.markdown(
+            """
+**Locate:** find public resource options based on need, location, and access limits.
+
+**Identify:** notice barriers early, like hours, eligibility, transportation, documents, or cost.
+
+**Follow-up:** create respectful outreach language the user can review before using.
+
+**Track:** create tracker rows, next actions, due dates, and notes so nothing gets lost.
+"""
+        )
+        ui.render_hover_animation(width_px=300, height_px=300, frame_delay_ms=1200)
+
+    with st.expander("Privacy and Consent", expanded=False):
+        st.markdown(
+            """
+LIFT uses public resource data and provider website checks when available. Output history is session-only unless the user downloads it. Email sending requires SMTP configuration, a reviewed draft, an approved recipient, and explicit approval.
+
+LIFT does not call providers, monitor voicemail, or scan inboxes. Phone calls remain a user action.
+"""
+        )
+
     with st.expander("About LIFT Agent", expanded=False):
         render_about_page()
 
-    with st.expander("Validation / Monitoring Notes", expanded=False):
-        render_monitoring_page()
+    with st.expander("Project Evidence", expanded=False):
+        st.markdown(
+            """
+Evidence files in this repository document the agent loop, tool functions, real-world integrations, fallback handling, and test notes.
+
+- `Evidence/AGENT_WORKFLOW_EVIDENCE.md`
+- `Evidence/TEST_RUN_NOTES.md`
+"""
+        )
 
 
 if __name__ == "__main__":

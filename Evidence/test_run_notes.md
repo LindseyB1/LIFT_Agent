@@ -1,5 +1,20 @@
 # LIFT Agent - Test Run Evidence
 
+## 2026-06-23 Guided Agent Update Checks
+
+Manual and code-level checks for this update should verify:
+
+- App starts successfully with `streamlit run app.py`.
+- First visible main button is `Start your LIFT plan` and jumps to `1. Tell LIFT what you need`.
+- Consent labels are plain text, without extra checkmark symbols inside labels.
+- Action selection is grouped into Find, Plan, and Follow up.
+- Missing `GOOGLE_MAPS_API_KEY` logs Google geocoding as skipped instead of crashing.
+- Missing SMTP secrets show a setup/skip message instead of crashing.
+- SMTP send requires editable recipient, subject, body, explicit approval checkbox, and the `Send approved email` button.
+- Agent Activity Log appears after generation with status and data-source labels.
+- CSV tracker download remains available when tracker rows are created.
+- Phone-call output states that LIFT does not place phone calls and that the script is for the user to use manually.
+
 **Project:** Project 3 - LIFT Agent (Locate, Identify, Follow-up, Track)  
 **Last Updated:** June 14, 2026  
 **Status:** Updated 2026-06-21 with automated smoke/eval results. Direct unittest run passed after the customer-journey upgrade; pytest could not run locally because pytest is not installed in this Python environment.
