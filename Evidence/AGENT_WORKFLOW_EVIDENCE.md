@@ -8,6 +8,17 @@ LIFT Agent is a human-supervised autonomous resource navigation agent. The curre
 guided user intake -> selected agent actions -> public/external tool calls -> structured outputs -> human review -> optional approved SMTP send -> audit log and downloads
 ```
 
+The operational loop is:
+
+```text
+Observe -> Reason -> Act -> Log
+```
+
+- Observe: collect need, location, access limits, fit context, consent, and selected actions.
+- Reason: infer resource category, urgency, barriers, fallback needs, and provider confidence.
+- Act: run public search, provider website checks, optional Google Maps geocoding/map links, outreach draft generation, call script generation, tracker row creation, CSV export, and approved SMTP sending.
+- Log: write each action to the Agent Activity Log with status, data source, explanation, and whether human approval was required.
+
 The app does not place phone calls. Phone calls remain a manual user action; LIFT prepares the call plan, call script, checklist, and tracker row.
 
 ## Current Tool-Style Functions
@@ -17,8 +28,10 @@ The app does not place phone calls. Phone calls remain a manual user action; LIF
 - `geocode_provider_locations()` uses `GOOGLE_MAPS_API_KEY` from Streamlit secrets or environment variables when configured.
 - `render_google_map()` prepares mapped provider rows and Google Maps links when coordinates are available.
 - `generate_outreach_email()` creates a reviewed, editable outreach draft.
+- `generate_call_script()` creates a manual phone-call script for the user.
 - `send_email_smtp()` sends only approved email through SMTP credentials from secrets or environment variables.
 - `create_tracker_rows()` creates follow-up tracker rows for provider options.
+- `export_tracker_csv()` creates tracker CSV data for download.
 - `write_agent_audit_log()` stores the Agent Activity Log in Streamlit session state for display and CSV export.
 
 ## Real-World Integrations
@@ -43,6 +56,8 @@ Secrets are never hardcoded and should not be committed.
 | 2026-06-23 10:15:09 | Tracker rows created | completed | local/session data | 5 tracker rows prepared. |
 | 2026-06-23 10:15:09 | SMTP email sending | skipped | local/session data | SMTP email is only sent from the review panel after explicit approval. |
 
+The live app also includes a `human_approval_required` column. Outreach email draft generation and SMTP email sending are marked as requiring approval.
+
 ## Example Tracker Row
 
 ```json
@@ -59,6 +74,23 @@ Secrets are never hardcoded and should not be committed.
   "Notes": "Public search result; confirm before relying on this provider."
 }
 ```
+
+## Example Provider Confidence Label
+
+```json
+{
+  "provider": "Example Community Food Pantry",
+  "confidence_label": "Medium confidence",
+  "confidence_reason": "Provider appears relevant, but hours, eligibility, or availability need confirmation.",
+  "next_best_action": "Call to confirm walk-in hours and current availability."
+}
+```
+
+Confidence labels are intentionally conservative:
+
+- High confidence: website reachable, location available, and category appears to match the need.
+- Medium confidence: provider appears relevant, but hours, eligibility, or availability need confirmation.
+- Low confidence: limited public information, missing address, unreachable website, or fallback/example data used.
 
 ## SMTP Approval Flow
 

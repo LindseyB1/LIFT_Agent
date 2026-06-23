@@ -8,7 +8,7 @@ LIFT Agent = Locate, Identify, Follow-up, Track.
 Purpose:
 - Make the app calmer, cleaner, and easier for non-technical users.
 - Keep the main app as one continuous scrolling page.
-- Keep advanced/project details in an optional sidebar.
+- Keep advanced/project details in lower-page optional sections.
 - Use the real local animation files in assets/lift_animation.
 - Use the real local brand icon in assets/lift_brand when available.
 - Do not use fake visual placeholders.
@@ -24,7 +24,7 @@ Expected brand icon files:
 
 Important:
 Most functions are presentational only.
-render_advanced_sidebar() intentionally reads and updates:
+render_archived_project_panel() intentionally reads and updates:
 - st.session_state["language"]
 - st.session_state["language_access_needed"]
 
@@ -612,7 +612,7 @@ def render_top_menu(supported_languages: List[str]) -> None:
 
         with tab_notes:
             st.markdown(
-                "Project evidence and agent traces remain available in the sidebar and after "
+                "Project evidence and agent traces remain available in lower-page sections and after "
                 "a plan is generated."
             )
 
@@ -978,21 +978,21 @@ def render_soft_intro_card() -> None:
     )
 
 
-def render_advanced_sidebar(
+def render_archived_project_panel(
     supported_languages: List[str],
     openai_available: bool,
     api_key_present: bool,
 ) -> None:
     """
-    Render the optional advanced sidebar.
+    Render archived project notes if called by a future page.
 
-    This sidebar does not control the main page.
+    This helper does not control the main page.
     It does not switch pages.
     It does not call st.stop().
     """
-    with st.sidebar:
+    with st.container():
         st.markdown("### LIFT Agent")
-        st.caption("Advanced panel. Optional. The main app still works without using this.")
+        st.caption("Archived panel. Optional. The main app works without using this.")
 
         with st.expander("⚙️ Settings", expanded=False):
             current_language = st.session_state.get("language", "English")
@@ -1007,7 +1007,7 @@ def render_advanced_sidebar(
                 "Display language",
                 supported_languages,
                 index=language_index,
-                key="sidebar_language_select",
+                key="archived_language_select",
             )
 
             st.session_state["language"] = language_choice
@@ -1028,7 +1028,7 @@ def render_advanced_sidebar(
                 "Service language need",
                 language_need_options,
                 index=need_index,
-                key="sidebar_language_need_select",
+                key="archived_language_need_select",
             )
 
             st.session_state["language_access_needed"] = language_need_choice

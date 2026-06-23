@@ -42,6 +42,7 @@ CURATED_CORPUS_PATH = Path("Data/lift_curated_corpus.md")
 SUPPORTED_LANGUAGES = [
     "English",
     "Spanish",
+    "Italian",
     "French",
     "Arabic",
     "Bengali / Bangla",
@@ -131,6 +132,24 @@ TRANSLATIONS = {
         "Low-cost": "Bajo costo",
         "Interpreter needed": "Se necesita intérprete",
         "Translation is AI-assisted. Please confirm important details directly with the provider.": "La traducción es asistida por IA. Por favor, confirma detalles importantes directamente con el proveedor.",
+    },
+    "Italian": {
+        "Generate LIFT Plan": "Genera piano LIFT",
+        "Privacy, Consent, and User Control": "Privacy, consenso e controllo utente",
+        "Optional Context": "Contesto opzionale",
+        "Select only what you are comfortable sharing. This helps match better resources.": "Seleziona solo cio che vuoi condividere. Aiuta LIFT a trovare risorse migliori.",
+        "Language / Idioma": "Lingua",
+        "Language access needed": "Supporto linguistico necessario",
+        "No preference": "Nessuna preferenza",
+        "Resource category": "Categoria risorsa",
+        "Urgency": "Urgenza",
+        "Primary search location": "Localita principale",
+        "Additional locations": "Localita aggiuntive",
+        "Search radius in miles": "Raggio di ricerca in miglia",
+        "Hours unknown": "Orari sconosciuti",
+        "Cost unknown": "Costo sconosciuto",
+        "Free": "Gratuito",
+        "Translation is AI-assisted. Please confirm important details directly with the provider.": "La traduzione e assistita dall'IA. Conferma i dettagli importanti direttamente con il fornitore.",
     },
     "French": {
         "Generate LIFT Plan": "Générer le Plan LIFT",
@@ -1153,13 +1172,14 @@ def get_secret_or_env(name, default=""):
     return os.getenv(name, default)
 
 
-def log_agent_action(log_entries, action, status, data_source, message, detail=None):
+def log_agent_action(log_entries, action, status, data_source, message, detail=None, human_approval_required=False):
     entry = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "action": action,
         "status": status,
         "data_source": data_source,
         "message": message,
+        "human_approval_required": "Yes" if human_approval_required else "No",
     }
     if detail is not None:
         entry["detail"] = detail
@@ -1301,15 +1321,16 @@ def render_google_map(providers, log_entries):
     if mapped:
         log_agent_action(
             log_entries,
-            "Google map generated",
+            "Map rendered with provider markers/map links",
             "completed" if google_maps_key_present() else "fallback used",
             "real external API/tool data" if google_maps_key_present() else "local/session data",
             f"{len(mapped)} provider(s) available for map display.",
+            human_approval_required=False,
         )
     else:
         log_agent_action(
             log_entries,
-            "Google map generated",
+            "Map rendered with provider markers/map links",
             "skipped",
             "local/session data",
             "No complete provider coordinates were available to map.",
@@ -1335,6 +1356,120 @@ def generate_outreach_email(user_need, provider, language_access_needed="No pref
             f"6. Whether {language_access_needed} language support or interpreter support is available\n\n"
             "I am not asking for a referral through this message yet. I am only trying to verify fit, availability, and next steps.\n\n"
             "Thank you."
+        ),
+    }
+
+
+def generate_call_script(user_need, provider, language_access_needed="No preference"):
+    provider_name = provider.get("resource_name") or provider.get("name") or "the provider"
+    return (
+        "LIFT does not place phone calls. This script is prepared for the user to review and use when calling.\n\n"
+        f"Hi, is this {provider_name}? I am calling to verify a few things for someone looking for help with: {user_need}\n\n"
+        "1. Do you currently provide this type of support?\n"
+        "2. What are the key eligibility requirements?\n"
+        "3. What are your hours, and do you have after-hours or 24/7 options?\n"
+        "4. Is an appointment, referral, walk-in visit, or application required?\n"
+        "5. What documents should the person bring or prepare?\n"
+        "6. Is there a cost, waitlist, transportation issue, or service-area limit?\n"
+        f"7. Do you have {language_access_needed} language support or interpreter access?\n\n"
+        "Thank you. I am gathering accurate next-step information before someone relies on this resource."
+    )
+
+
+def export_tracker_csv(tracker_rows, log_entries=None):
+    tracker_df = pd.DataFrame(tracker_rows or [])
+    csv_data = tracker_df.to_csv(index=False)
+    if log_entries is not None:
+        log_agent_action(
+            log_entries,
+            "CSV tracker export created",
+            "completed" if tracker_rows else "skipped",
+            "local/session data",
+            f"{len(tracker_rows or [])} tracker row(s) exported to CSV data.",
+        )
+    return csv_data
+
+
+def classify_provider_category(provider):
+    text = f"{provider.get('category', '')} {provider.get('resource_name', '')} {provider.get('notes', '')}".lower()
+    if any(term in text for term in ["food", "pantry", "meal"]):
+        return "Food"
+    if any(term in text for term in ["shelter", "housing", "homeless"]):
+        return "Shelter"
+    if "legal" in text:
+        return "Legal"
+    if any(term in text for term in ["medical", "health", "clinic", "behavioral"]):
+        return "Medical"
+    if "transport" in text or "bus" in text:
+        return "Transportation"
+    if any(term in text for term in ["utility", "utilities", "bill"]):
+        return "Utility Help"
+    return "Other"
+
+
+def provider_confidence_label(provider, check=None, fallback_used=False):
+    has_address = bool(provider.get("area_served") or provider.get("city"))
+    has_coords = provider.get("lat") not in ["", None] and provider.get("lon") not in ["", None]
+    website_reachable = bool(check and check.get("website_status") == "active")
+    category_match = provider.get("category") not in ["", None, "Any / Not Sure"]
+    if fallback_used or "fallback" in str(provider.get("matched_location", "")).lower():
+        return "Low confidence", "Limited public information or fallback/example data used; needs human confirmation."
+    if website_reachable and (has_address or has_coords) and category_match:
+        return "High confidence", "Website reachable, location available, and category appears to match the need."
+    if category_match or has_address or has_coords:
+        return "Medium confidence", "Provider appears relevant, but hours, eligibility, or availability need confirmation."
+    return "Low confidence", "Limited public information, missing address, or unreachable website."
+
+
+def next_best_provider_action(provider, confidence_label):
+    text = f"{provider.get('eligibility', '')} {provider.get('business_hours', '')} {provider.get('notes', '')}".lower()
+    if "document" in text or "proof" in text or "id" in text:
+        return "Confirm documents before traveling."
+    if "hours" in text or "unknown" in text or confidence_label != "High confidence":
+        return "Call to confirm walk-in hours and current availability."
+    if "email" in str(provider.get("group_email", "")).lower() or "@" in str(provider.get("group_email", "")):
+        return "Email to ask about eligibility and intake steps."
+    return "Use as backup if the first option is full or does not fit."
+
+
+def build_map_summary(providers, provider_checks, map_rows, radius_miles):
+    provider_checks = provider_checks or []
+    reachable_names = {
+        check.get("provider_name")
+        for check in provider_checks
+        if check.get("website_status") == "active"
+    }
+    distances = [
+        (provider.get("resource_name", "Provider"), provider.get("distance_miles"))
+        for provider in providers
+        if provider.get("distance_miles") not in ["", None]
+    ]
+    distances = sorted(distances, key=lambda item: item[1] if item[1] is not None else 9999)
+    categories = sorted({classify_provider_category(provider) for provider in providers})
+    confirmation_count = max(len(providers) - len(reachable_names), 0)
+    closest = distances[0][0] if distances else "Distance not available"
+    gaps = []
+    if "Legal" not in categories:
+        gaps.append("Legal aid may require a broader search radius.")
+    if not map_rows:
+        gaps.append("Some locations could not be mapped from available public data.")
+    if radius_miles <= 10 and len(providers) < 3:
+        gaps.append("Few nearby options found; consider a wider radius.")
+    if not gaps:
+        gaps.append("Coverage appears usable, but availability still needs human confirmation.")
+    suggested = "Start with the closest high or medium confidence provider, then use the tracker to confirm hours and eligibility."
+    return {
+        "total_providers": len(providers),
+        "closest_provider": closest,
+        "reachable_websites": len(reachable_names),
+        "needs_human_confirmation": confirmation_count,
+        "categories": categories,
+        "coverage_concerns": gaps,
+        "suggested_next_action": suggested,
+        "summary_text": (
+            f"Map Summary: LIFT found {len(providers)} possible resource option(s) within the selected area. "
+            f"{len(reachable_names)} have reachable websites. {confirmation_count} need human confirmation. "
+            f"Categories represented: {', '.join(categories) if categories else 'none returned'}. {suggested}"
         ),
     }
 
@@ -2213,7 +2348,7 @@ def render_generate_page():
     with intake_cols[1]:
         urgency = st.selectbox(get_text("Urgency", language), ["Routine", "Soon", "Urgent", "Crisis / immediate"])
 
-    st.header("2. Identify location and access limits")
+    st.header("2. Where should LIFT look?")
     loc_col1, loc_col2, loc_col3 = st.columns(3)
     with loc_col1:
         primary_location = st.text_input(get_text("Primary search location", language), value="Grand Rapids, MI")
@@ -2231,8 +2366,18 @@ def render_generate_page():
         if item.strip()
     ]
 
-    st.header("3. Fit and eligibility context")
-    c1, c2, c3, c4 = st.columns(4)
+    access_col1, access_col2 = st.columns(2)
+    with access_col1:
+        transportation = st.selectbox("Transportation limits", ["Yes", "No", "Limited", "Public transit only"])
+    with access_col2:
+        access_modes = st.multiselect(
+            "Preferred access",
+            ["Nearby", "Bus-accessible", "Online", "Phone-based"],
+            default=["Nearby"],
+        )
+
+    st.header("3. Access barriers and fit")
+    c1, c2, c3 = st.columns(3)
     with c1:
         audience = st.selectbox(
             "User type",
@@ -2247,11 +2392,24 @@ def render_generate_page():
             ],
         )
     with c2:
-        transportation = st.selectbox("Transportation", ["Yes", "No", "Limited", "Public transit only"])
+        language_access_needed = st.selectbox(
+            "Language support needed",
+            ["No preference", "English", "Spanish", "Italian", "Other / Interpreter needed"],
+            index=0,
+            key="main_language_need_select",
+        )
+        st.session_state["language_access_needed"] = language_access_needed
     with c3:
         needs_24_7 = st.selectbox("Needs 24/7 or after-hours option?", ["No", "Yes", "Not sure"])
-    with c4:
-        documents_available = st.selectbox("Documents available?", ["Yes", "No", "Not sure"])
+    barrier_cols = st.columns(3)
+    with barrier_cols[0]:
+        free_low_cost = st.checkbox("Free or low-cost only", value=True)
+        appointment_okay = st.checkbox("Appointment required is okay", value=True)
+    with barrier_cols[1]:
+        documents_available = "No" if st.checkbox("Documentation concerns", value=False) else "Yes"
+        eligibility_concerns = st.checkbox("Eligibility concerns", value=False)
+    with barrier_cols[2]:
+        accessibility_barriers = st.checkbox("Accessibility or transportation barriers", value=(transportation != "Yes"))
 
     context = {
         "audience": audience,
@@ -2261,6 +2419,11 @@ def render_generate_page():
         "urgency": urgency,
         "display_language": language,
         "language_access_needed": language_access_needed,
+        "access_modes": access_modes,
+        "free_low_cost": free_low_cost,
+        "appointment_okay": appointment_okay,
+        "eligibility_concerns": eligibility_concerns,
+        "accessibility_barriers": accessibility_barriers,
     }
 
     with st.expander(get_text("Optional Context", language), expanded=False):
@@ -2370,6 +2533,25 @@ def render_generate_page():
 
         agent_log = []
         log_agent_action(agent_log, "User need received", "completed", "local/session data", "The guided intake was submitted.")
+        emergency_terms = [
+            "immediate danger",
+            "self-harm",
+            "suicide",
+            "kill myself",
+            "violence",
+            "medical emergency",
+            "overdose",
+            "unsafe right now",
+        ]
+        emergency_notice = any(term in user_need.lower() for term in emergency_terms) or urgency == "Crisis / immediate"
+        if emergency_notice:
+            log_agent_action(
+                agent_log,
+                "Crisis safety notice prepared",
+                "completed",
+                "local/session data",
+                "LIFT is not an emergency service; emergency and crisis language will be shown before planning outputs.",
+            )
 
         retrieval_trace = retrieve_curated_context(
             user_need=user_need,
@@ -2501,14 +2683,24 @@ def render_generate_page():
                 first_provider = tool_result.get("matched_resources", [{}])[0] if tool_result.get("matched_resources") else {}
                 email_draft = generate_outreach_email(user_need, first_provider, language_access_needed)
                 tool_result["smtp_email_draft"] = email_draft
-                log_agent_action(agent_log, "Outreach email draft created", "completed", "local/session data", "Editable outreach draft prepared for human review.")
+                log_agent_action(
+                    agent_log,
+                    "Outreach email draft created",
+                    "completed",
+                    "local/session data",
+                    "Editable outreach draft prepared for human review.",
+                    human_approval_required=True,
+                )
             else:
                 tool_result["smtp_email_draft"] = {"recipient": "", "subject": "", "body": ""}
                 log_agent_action(agent_log, "Outreach email draft created", "skipped", "local/session data", "User did not select email draft generation.")
 
             if act_call:
+                first_provider = tool_result.get("matched_resources", [{}])[0] if tool_result.get("matched_resources") else {}
+                tool_result["call_script"] = generate_call_script(user_need, first_provider, language_access_needed)
                 log_agent_action(agent_log, "Call script created", "completed", "local/session data", "Manual phone-call script prepared. LIFT did not call providers.")
             else:
+                tool_result["call_script"] = ""
                 log_agent_action(agent_log, "Call script created", "skipped", "local/session data", "User did not select call script generation.")
 
             if act_tracker:
@@ -2517,7 +2709,52 @@ def render_generate_page():
                 tool_result["tracker_rows"] = []
                 log_agent_action(agent_log, "Tracker rows created", "skipped", "local/session data", "User did not select tracker rows.")
 
-            log_agent_action(agent_log, "SMTP email sending", "skipped", "local/session data", "SMTP email is only sent from the review panel after explicit approval.")
+            if act_csv:
+                tool_result["tracker_csv"] = export_tracker_csv(tool_result.get("tracker_rows", []), agent_log)
+            else:
+                tool_result["tracker_csv"] = ""
+                log_agent_action(agent_log, "CSV tracker export created", "skipped", "local/session data", "User did not select CSV tracker export.")
+
+            check_by_name = {check.get("provider_name"): check for check in provider_checks}
+            for provider in tool_result.get("matched_resources", []):
+                check = check_by_name.get(provider.get("resource_name"))
+                if check:
+                    provider["website_status"] = check.get("website_status", "unknown")
+                    provider["website_check_confidence"] = check.get("confidence", "unknown")
+                confidence, confidence_reason = provider_confidence_label(
+                    provider,
+                    check=check,
+                    fallback_used=data_source_trace.get("fallback_used", False),
+                )
+                provider["public_service_category"] = classify_provider_category(provider)
+                provider["confidence_label"] = confidence
+                provider["confidence_reason"] = confidence_reason
+                provider["next_best_action"] = next_best_provider_action(provider, confidence)
+                if provider.get("lat") not in ["", None] and provider.get("lon") not in ["", None] and not provider.get("map_link"):
+                    provider["map_link"] = f"https://www.google.com/maps/search/?api=1&query={provider.get('lat')},{provider.get('lon')}"
+
+            map_summary = build_map_summary(
+                tool_result.get("matched_resources", []),
+                provider_checks,
+                map_rows,
+                radius_miles,
+            )
+            log_agent_action(
+                agent_log,
+                "Map summary prepared",
+                "completed" if map_rows or tool_result.get("matched_resources") else "skipped",
+                "local/session data",
+                "Executive map summary card prepared from provider and map rows.",
+            )
+
+            log_agent_action(
+                agent_log,
+                "SMTP email sending",
+                "skipped",
+                "local/session data",
+                "SMTP email is only sent from the review panel after explicit approval.",
+                human_approval_required=True,
+            )
             write_agent_audit_log(agent_log)
 
             st.session_state["route_trace"] = route_trace
@@ -2529,6 +2766,8 @@ def render_generate_page():
             st.session_state["provider_checks"] = provider_checks
             st.session_state["map_rows"] = map_rows
             st.session_state["geocode_trace"] = geocode_trace
+            st.session_state["map_summary"] = map_summary
+            st.session_state["emergency_notice"] = emergency_notice
             st.session_state["final_text"] = final_text
             st.session_state["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -2536,15 +2775,37 @@ def render_generate_page():
         st.divider()
         st.header("Results")
         translation_safety_note()
+        if st.session_state.get("emergency_notice"):
+            st.warning(
+                "LIFT is not an emergency service. If there is immediate danger, call emergency services or a local crisis line. "
+                "LIFT can still help organize non-emergency follow-up resources."
+            )
 
         log_df = pd.DataFrame(st.session_state.get("agent_activity_log", []))
         with st.container(border=True):
             st.subheader("Agent Activity Log")
             if not log_df.empty:
-                st.dataframe(log_df[["timestamp", "action", "status", "data_source", "message"]], use_container_width=True)
+                st.dataframe(
+                    log_df[["timestamp", "action", "status", "data_source", "human_approval_required", "message"]],
+                    use_container_width=True,
+                )
 
         tool_result = st.session_state["tool_result"]
         matched_df = pd.DataFrame(tool_result.get("matched_resources", []))
+
+        with st.container(border=True):
+            st.subheader("Top 3 Recommended Next Steps")
+            top_steps = []
+            if tool_result.get("recommended_first_resource"):
+                top_steps.append(f"Start with {tool_result.get('recommended_first_resource')} and confirm current hours, eligibility, and intake steps.")
+            for provider in tool_result.get("matched_resources", [])[:2]:
+                action = provider.get("next_best_action")
+                if action:
+                    top_steps.append(f"{provider.get('resource_name', 'Provider')}: {action}")
+            while len(top_steps) < 3:
+                top_steps.append("Use the tracker to record what was confirmed, what failed, and the next follow-up date.")
+            for step in top_steps[:3]:
+                st.markdown(f"- {step}")
 
         with st.container(border=True):
             st.subheader("Resource Fit Summary")
@@ -2571,18 +2832,54 @@ def render_generate_page():
                         "status",
                         "distance_miles",
                         "map_link",
+                        "confidence_label",
+                        "next_best_action",
                     ]
                     if col in matched_df.columns
                 ]
                 st.dataframe(matched_df[display_cols], use_container_width=True)
+                for idx, provider in enumerate(tool_result.get("matched_resources", [])[:6], start=1):
+                    st.markdown(f"**{idx}. {provider.get('resource_name', 'Provider')}**")
+                    st.caption(
+                        f"{provider.get('public_service_category', classify_provider_category(provider))} | "
+                        f"{provider.get('confidence_label', 'Medium confidence')} | "
+                        f"{provider.get('status', 'Needs human confirmation')}"
+                    )
+                    st.markdown(f"- Location: {provider.get('area_served') or provider.get('city') or 'Location not returned'}")
+                    st.markdown(f"- Website status: {provider.get('website_status', 'See basic website check if available')}")
+                    st.markdown(f"- Confidence note: {provider.get('confidence_reason', 'Needs human confirmation.')}")
+                    st.markdown(f"- Next best action: {provider.get('next_best_action', 'Confirm hours, eligibility, and intake process.')}")
+                    if provider.get("map_link"):
+                        st.markdown(f"- [Map link]({provider.get('map_link')})")
+                    contact = provider.get("group_email") or provider.get("phone") or "Contact not returned"
+                    st.markdown(f"- Contact: {contact}")
+                    st.divider()
                 if st.session_state.get("provider_checks"):
                     with st.expander("Provider website check details", expanded=False):
                         st.json(st.session_state["provider_checks"])
 
         with st.container(border=True):
+            st.subheader("Executive Map Summary")
+            map_summary = st.session_state.get("map_summary", {})
+            if map_summary:
+                metric_cols = st.columns(4)
+                metric_cols[0].metric("Providers", map_summary.get("total_providers", 0))
+                metric_cols[1].metric("Reachable Websites", map_summary.get("reachable_websites", 0))
+                metric_cols[2].metric("Need Confirmation", map_summary.get("needs_human_confirmation", 0))
+                metric_cols[3].metric("Closest", map_summary.get("closest_provider", "Unknown"))
+                st.write(map_summary.get("summary_text", "Map summary is unavailable."))
+                st.markdown("**Coverage concerns**")
+                for concern in map_summary.get("coverage_concerns", []):
+                    st.markdown(f"- {concern}")
+                st.markdown(f"**Suggested next map-based action:** {map_summary.get('suggested_next_action', '')}")
+            else:
+                st.info("Map summary is unavailable for this run.")
+
+        with st.container(border=True):
             st.subheader("Map View")
             map_rows = st.session_state.get("map_rows", [])
             if map_rows:
+                st.caption("Legend: Food, Shelter, Legal, Medical, Transportation, Utility Help, and Other are public-service categories inferred from public data.")
                 st.map(pd.DataFrame(map_rows).rename(columns={"lon": "longitude", "lat": "latitude"}))
                 for row in map_rows:
                     st.markdown(f"- [{row['resource_name']}]({row['map_link']})")
@@ -2593,7 +2890,7 @@ def render_generate_page():
                     st.write(st.session_state["geocode_trace"]["errors"])
 
         with st.container(border=True):
-            st.subheader("Gap Analysis")
+            st.subheader("Barriers and Gaps to Confirm")
             gap_items = (
                 tool_result.get("access_barriers", [])
                 + tool_result.get("eligibility_barriers", [])
@@ -2630,6 +2927,7 @@ def render_generate_page():
                             status,
                             "real external API/tool data" if status == "completed" else "local/session data",
                             result.get("message", ""),
+                            human_approval_required=True,
                         )
                         if result.get("sent"):
                             st.success(result["message"])
@@ -2640,17 +2938,10 @@ def render_generate_page():
 
         with st.container(border=True):
             st.subheader("Call Script")
-            first_provider = tool_result.get("matched_resources", [{}])[0] if tool_result.get("matched_resources") else {}
-            call_script = (
-                "LIFT does not place phone calls. This script is prepared for the user to review and use when calling.\n\n"
-                f"Hi, is this {first_provider.get('resource_name', 'the provider')}? I am calling to verify a few things:\n\n"
-                "1. Do you currently provide this type of support?\n"
-                "2. What are the key eligibility requirements?\n"
-                "3. What are your hours, and do you have after-hours options?\n"
-                "4. Is an appointment, referral, or application required?\n"
-                "5. What documents should the person bring or prepare?\n"
-                f"6. Do you have {language_access_needed} language support or interpreter access?\n\n"
-                "Thank you. I am gathering accurate next-step information before someone relies on this resource."
+            call_script = tool_result.get("call_script") or generate_call_script(
+                st.session_state.get("user_need", ""),
+                tool_result.get("matched_resources", [{}])[0] if tool_result.get("matched_resources") else {},
+                language_access_needed,
             )
             st.text_area("Manual call script", value=call_script, height=210)
 
@@ -2663,11 +2954,11 @@ def render_generate_page():
                 st.dataframe(tracker_df, use_container_width=True)
 
         with st.container(border=True):
-            st.subheader("Downloads")
+            st.subheader("CSV Download")
             if not tracker_df.empty:
                 st.download_button(
                     "Download Tracker CSV",
-                    data=tracker_df.to_csv(index=False),
+                    data=tool_result.get("tracker_csv") or export_tracker_csv(tool_result.get("tracker_rows", [])),
                     file_name=f"lift_tracker_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
                     use_container_width=True,
@@ -3489,22 +3780,36 @@ def main():
     # Initialize session state
     init_session_state()
 
-    # Visual redesign and optional advanced sidebar
+    # Visual redesign
     ui.inject_global_styles()
-    ui.render_advanced_sidebar(
-        supported_languages=SUPPORTED_LANGUAGES,
-        openai_available=OPENAI_AVAILABLE,
-        api_key_present=bool(get_openai_api_key()),
-    )
 
     # Main guided intake page
     ui.render_brand_header(app_name=APP_NAME, author_line="from Britney Katherine Lindsey")
+    lang_cols = st.columns([1, 2])
+    with lang_cols[0]:
+        language_options = ["English", "Spanish", "Italian"]
+        current_language = st.session_state.get("language", "English")
+        st.session_state["language"] = st.selectbox(
+            "Language",
+            language_options,
+            index=language_options.index(current_language) if current_language in language_options else 0,
+            key="top_language_select_clean",
+        )
     ui.render_scroll_cta(target_anchor_id="lift-form-section", label="Start your LIFT plan")
     st.markdown("A guided plan for finding resource options, checking barriers, preparing outreach, and tracking next steps.")
     ui.render_anchor("lift-form-section")
     render_generate_page()
 
     st.divider()
+    with st.container(border=True):
+        st.markdown("**Navigation**")
+        footer_cols = st.columns(5)
+        footer_cols[0].markdown("Language")
+        footer_cols[1].markdown("About LIFT")
+        footer_cols[2].markdown("How LIFT Works")
+        footer_cols[3].markdown("Privacy")
+        footer_cols[4].markdown("Evidence / Project Notes")
+
     with st.expander("How LIFT Works", expanded=False):
         st.markdown(
             """

@@ -9,7 +9,9 @@ Real digital actions in the Streamlit app include:
 - Public resource search with OpenStreetMap Nominatim when available
 - Basic public provider website checks
 - Google Maps/geocoding when `GOOGLE_MAPS_API_KEY` is configured
+- Executive-style map summary, category labels, provider map links, and confidence labels
 - Editable outreach email draft generation
+- Manual call script generation; LIFT does not place calls
 - Approved SMTP email sending after explicit human review
 - Tracker row creation and CSV export
 - Agent Activity Log entries with `completed`, `skipped`, `failed`, or `fallback used` status labels
@@ -41,6 +43,23 @@ streamlit run app.py
 ```
 
 The app opens at `http://localhost:8501`.
+
+## Agent Tools
+
+The app exposes tool-style functions for the supervised agent loop:
+
+- `search_public_resources()`
+- `check_provider_website()`
+- `geocode_provider_locations()`
+- `render_google_map()`
+- `generate_outreach_email()`
+- `generate_call_script()`
+- `create_tracker_rows()`
+- `export_tracker_csv()`
+- `send_email_smtp()`
+- `write_agent_audit_log()`
+
+The results page shows the Agent Activity Log first, then next steps, resource fit, provider options, executive map summary, map links/view, gaps, backups, outreach draft, call script, tracker rows, and CSV downloads.
 
 ## Project Overview
 
