@@ -2316,7 +2316,7 @@ def render_generate_page():
     chip_cols = st.columns(4)
     for idx, example in enumerate(examples):
         with chip_cols[idx % 4]:
-            if st.button(example, key=f"need_chip_{idx}", use_container_width=True):
+            if st.button(example, key=f"need_chip_{idx}", width="stretch"):
                 st.session_state["need_text"] = example
 
     user_need = st.text_area(
@@ -2514,7 +2514,7 @@ def render_generate_page():
     generate = st.button(
         get_text("Generate LIFT Plan", language),
         type="primary",
-        use_container_width=True,
+        width="stretch",
         disabled=not all_consents_checked,
     )
 
@@ -2787,7 +2787,7 @@ def render_generate_page():
             if not log_df.empty:
                 st.dataframe(
                     log_df[["timestamp", "action", "status", "data_source", "human_approval_required", "message"]],
-                    use_container_width=True,
+                    width="stretch",
                 )
 
         tool_result = st.session_state["tool_result"]
@@ -2837,7 +2837,7 @@ def render_generate_page():
                     ]
                     if col in matched_df.columns
                 ]
-                st.dataframe(matched_df[display_cols], use_container_width=True)
+                st.dataframe(matched_df[display_cols], width="stretch")
                 for idx, provider in enumerate(tool_result.get("matched_resources", [])[:6], start=1):
                     st.markdown(f"**{idx}. {provider.get('resource_name', 'Provider')}**")
                     st.caption(
@@ -2915,7 +2915,7 @@ def render_generate_page():
             email_body = st.text_area("Editable email body", value=draft.get("body", ""), height=220, key="smtp_body")
             if act_smtp:
                 approved = st.checkbox("I reviewed and approve this email to be sent.", key="smtp_approved")
-                if st.button("Send approved email", type="primary", use_container_width=True, key="send_approved_email"):
+                if st.button("Send approved email", type="primary", width="stretch", key="send_approved_email"):
                     if not approved:
                         st.error("Review and approval are required before sending.")
                     else:
@@ -2951,7 +2951,7 @@ def render_generate_page():
             if tracker_df.empty:
                 st.info("No tracker rows were created for this run.")
             else:
-                st.dataframe(tracker_df, use_container_width=True)
+                st.dataframe(tracker_df, width="stretch")
 
         with st.container(border=True):
             st.subheader("CSV Download")
@@ -2961,14 +2961,14 @@ def render_generate_page():
                     data=tool_result.get("tracker_csv") or export_tracker_csv(tool_result.get("tracker_rows", [])),
                     file_name=f"lift_tracker_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                 )
             st.download_button(
                 "Download Agent Activity Log CSV",
                 data=log_df.to_csv(index=False),
                 file_name=f"lift_agent_activity_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
 
     return
@@ -3163,7 +3163,7 @@ def render_generate_page():
     generate = st.button(
         get_text("Generate LIFT Plan", language),
         type="primary",
-        use_container_width=True,
+        width="stretch",
         disabled=not all_consents_checked,
     )
 
@@ -3434,21 +3434,21 @@ def render_generate_page():
                         selected_providers.append(provider)
 
             with st.expander("Detailed resource table", expanded=False):
-                st.dataframe(matched_df[existing_columns], use_container_width=True)
+                st.dataframe(matched_df[existing_columns], width="stretch")
 
         
         st.subheader("3. Track follow-up actions")
         tracker_df = pd.DataFrame(tool_result.get("tracker_rows", []))
 
         if not tracker_df.empty:
-            st.dataframe(tracker_df, use_container_width=True)
+            st.dataframe(tracker_df, width="stretch")
             csv_data = tracker_df.to_csv(index=False)
             st.download_button(
                 "📥 Download Tracker CSV",
                 data=csv_data,
                 file_name=f"lift_tracker_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
 
         # Ensure selected_providers exists
@@ -3496,7 +3496,7 @@ def render_generate_page():
                     "Run selected provider checks",
                     key="run_selected_provider_checks",
                     type="secondary",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
                 if run_provider_checks:
@@ -3639,7 +3639,7 @@ def render_generate_page():
                 data=outreach_all,
                 file_name=f"lift_outreach_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                 mime="text/plain",
-                use_container_width=True
+                width="stretch"
             )
         else:
             st.info("💡 Select providers above to generate warm outreach drafts.")
@@ -3671,10 +3671,10 @@ def render_generate_page():
                 data=case_summary_text,
                 file_name=f"{case_record.get('case_id', 'lift_case')}.txt",
                 mime="text/plain",
-                use_container_width=True,
+                width="stretch",
             )
 
-            if st.button("Save case to this session", use_container_width=True):
+            if st.button("Save case to this session", width="stretch"):
                 st.session_state["case_history"].append(case_record)
                 st.success("Saved to this session's case history.")
 
@@ -3849,3 +3849,4 @@ Evidence files in this repository document the agent loop, tool functions, real-
 
 if __name__ == "__main__":
     main()
+

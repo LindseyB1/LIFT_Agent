@@ -34,11 +34,12 @@ stop, hide, or control the main app flow.
 
 import base64
 import html
+import io
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import streamlit as st
-import streamlit.components.v1 as components
+from PIL import Image
 
 
 LIFT_COLORS = {
@@ -689,6 +690,52 @@ def _load_animation_frames(
     return frames, missing
 
 
+@st.cache_data(show_spinner=False)
+def _build_animation_gif(
+    frame_dir_text: str,
+    frame_names: Tuple[str, ...],
+    max_size: int,
+    frame_delay_ms: int,
+) -> Tuple[bytes, List[str]]:
+    """Build a small animated GIF from the local dot-art frames."""
+    frame_dir = Path(frame_dir_text)
+    images = []
+    missing = []
+
+    for name in frame_names:
+        path = frame_dir / name
+        if not path.is_file():
+            missing.append(name)
+            continue
+        try:
+            with Image.open(path) as source:
+                image = source.convert("RGBA")
+                image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                canvas = Image.new("RGBA", (max_size, max_size), (255, 255, 255, 0))
+                left = (max_size - image.width) // 2
+                top = (max_size - image.height) // 2
+                canvas.alpha_composite(image, (left, top))
+                images.append(canvas.convert("P", palette=Image.Palette.ADAPTIVE))
+        except Exception:
+            missing.append(name)
+
+    if len(images) < 2:
+        return b"", missing
+
+    output = io.BytesIO()
+    images[0].save(
+        output,
+        format="GIF",
+        save_all=True,
+        append_images=images[1:],
+        duration=max(int(frame_delay_ms), 900),
+        loop=0,
+        optimize=True,
+        disposal=2,
+    )
+    return output.getvalue(), missing
+
+
 def render_hover_animation(
     frame_dir: Path = ANIMATION_FRAME_DIR,
     frame_names: Optional[List[str]] = None,
@@ -697,12 +744,11 @@ def render_hover_animation(
     frame_delay_ms: int = 1250,
 ) -> None:
     """
-    Render a hover-triggered flipbook animation using real local image files.
+    Render a calm animated GIF using real local dot-art frame files.
 
     Behavior:
-    - Resting image = 1 LIFT Project.png
-    - Hover/focus = cycles through the available images in order
-    - Mouse leave/blur = returns to image 1
+    - Uses frames 1 through 32 in numeric order.
+    - Runs slowly so it supports the page instead of dominating it.
 
     No fake placeholder artwork is shown.
     If files are missing, the app shows a clear warning/error.
@@ -711,9 +757,14 @@ def render_hover_animation(
         frame_names = ANIMATION_FRAME_NAMES
 
     frame_dir = Path(frame_dir)
-    frames, missing = _load_animation_frames(frame_dir, frame_names)
+    gif_bytes, missing = _build_animation_gif(
+        frame_dir.as_posix(),
+        tuple(frame_names),
+        max(width_px, height_px),
+        frame_delay_ms,
+    )
 
-    if len(frames) < 2:
+    if not gif_bytes:
         st.error(
             f"Animation images are missing. Add at least `1 LIFT Project.png` and "
             f"`2 LIFT Project.png` to `{frame_dir.as_posix()}/`."
@@ -727,145 +778,7 @@ def render_hover_animation(
                 "files were not found or could not be read:"
             )
             st.write(missing)
-
-    frames_js_array = ", ".join([f'"{frame}"' for frame in frames])
-
-    component_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <style>
-        html, body {{
-            margin: 0;
-            padding: 0;
-            background: transparent;
-            overflow: hidden;
-        }}
-
-        .lift-art-shell {{
-            width: min({width_px}px, 96vw);
-            height: min({height_px}px, 96vw);
-            margin: 0 auto;
-            padding: 6px;
-            box-sizing: border-box;
-            border-radius: 22px;
-            background: rgba(255, 255, 255, 0.5);
-            border: 1px solid rgba(255, 255, 255, 0.78);
-            box-shadow: 0 14px 42px rgba(14, 95, 115, 0.11);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }}
-
-        #lift-hover-img {{
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            border-radius: 16px;
-            cursor: pointer;
-            display: block;
-            transition: transform 900ms ease, filter 900ms ease, opacity 700ms ease;
-        }}
-
-        #lift-hover-img:hover {{
-            transform: scale(1.012);
-            filter: saturate(1.04);
-        }}
-
-        @media (prefers-reduced-motion: reduce) {{
-            #lift-hover-img {{
-                transition: none;
-            }}
-
-            #lift-hover-img:hover {{
-                transform: none;
-                filter: none;
-            }}
-        }}
-
-        @media (max-width: 700px) {{
-            .lift-art-shell {{
-                width: min(240px, 82vw);
-                height: min(240px, 82vw);
-                padding: 4px;
-                border-radius: 14px;
-            }}
-
-            #lift-hover-img {{
-                border-radius: 10px;
-            }}
-        }}
-        </style>
-    </head>
-    <body>
-        <div class="lift-art-shell">
-            <img
-                id="lift-hover-img"
-                src="{frames[0]}"
-                alt="LIFT Agent pointillism animation"
-                tabindex="0"
-            />
-        </div>
-
-        <script>
-        (function() {{
-            const frames = [{frames_js_array}];
-            const img = document.getElementById("lift-hover-img");
-
-            if (!img || frames.length < 2) {{
-                return;
-            }}
-
-            let index = 0;
-            let intervalId = null;
-
-            function startCycle() {{
-                if (intervalId) {{
-                    return;
-                }}
-
-                index = 0;
-
-                intervalId = setInterval(function() {{
-                    index += 1;
-
-                    if (index >= frames.length) {{
-                        index = frames.length - 1;
-                        img.style.opacity = "0.72";
-                        img.src = frames[index];
-                        window.setTimeout(function() {{ img.style.opacity = "1"; }}, 220);
-                        clearInterval(intervalId);
-                        intervalId = null;
-                        return;
-                    }}
-
-                    img.style.opacity = "0.72";
-                    img.src = frames[index];
-                    window.setTimeout(function() {{ img.style.opacity = "1"; }}, 220);
-                }}, {frame_delay_ms});
-            }}
-
-            function resetCycle() {{
-                if (intervalId) {{
-                    clearInterval(intervalId);
-                    intervalId = null;
-                }}
-
-                index = 0;
-                img.src = frames[0];
-            }}
-
-            img.addEventListener("mouseenter", startCycle);
-            img.addEventListener("mouseleave", resetCycle);
-            img.addEventListener("focus", startCycle);
-            img.addEventListener("blur", resetCycle);
-        }})();
-        </script>
-    </body>
-    </html>
-    """
-
-    components.html(component_html, height=height_px + 34, scrolling=False)
+    st.image(gif_bytes, width=width_px, caption="LIFT Agent dot-art sequence")
 
 
 def render_what_image(image_path: Path = WHAT_IMAGE_PATH) -> None:
