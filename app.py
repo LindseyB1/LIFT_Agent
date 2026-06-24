@@ -2302,7 +2302,7 @@ def render_generate_page():
     )
 
     st.header("1. Tell LIFT what you need")
-    st.caption("You can write messy. LIFT will organize it.")
+    st.caption("Optional details only. You can write messy. LIFT will organize it.")
 
     examples = [
         "Food pantry near me",
@@ -2382,13 +2382,24 @@ def render_generate_page():
         audience = st.selectbox(
             "User type",
             [
-                "Service member",
+                "Active-duty service member",
+                "National Guard member",
+                "Reservist",
                 "Veteran",
+                "Military spouse or partner",
                 "Military-connected family",
+                "Surviving spouse or family member",
                 "Caregiver",
                 "Dependent",
+                "Parent or guardian",
+                "Student",
+                "Senior",
+                "Person with a disability",
+                "Unhoused or housing unstable",
+                "Justice-impacted / reentry",
                 "Community member",
                 "Not sure",
+                "Other",
             ],
         )
     with c2:
@@ -3049,13 +3060,24 @@ def render_generate_page():
         audience = st.selectbox(
             "User type",
             [
-                "Service member",
+                "Active-duty service member",
+                "National Guard member",
+                "Reservist",
                 "Veteran",
+                "Military spouse or partner",
                 "Military-connected family",
+                "Surviving spouse or family member",
                 "Caregiver",
                 "Dependent",
+                "Parent or guardian",
+                "Student",
+                "Senior",
+                "Person with a disability",
+                "Unhoused or housing unstable",
+                "Justice-impacted / reentry",
                 "Community member",
                 "Not sure",
+                "Other",
             ],
         )
 
