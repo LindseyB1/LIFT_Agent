@@ -14,7 +14,7 @@ The operational loop is:
 Observe -> Reason -> Act -> Log
 ```
 
-- Observe: collect need, location, access limits, fit context, consent, and selected actions.
+- Observe: collect need, search area, radius, transportation limits, preferred access, optional contact preferences, optional upload/link references, fit context, consent, and selected actions.
 - Reason: infer resource category, urgency, barriers, fallback needs, and provider confidence.
 - Act: run public search, provider website checks, optional Google Maps geocoding/map links, outreach draft generation, call script generation, tracker row creation, CSV export, and approved SMTP sending.
 - Log: write each action to the Agent Activity Log with status, data source, explanation, and whether human approval was required.
@@ -25,8 +25,11 @@ The app does not place phone calls. Phone calls remain a manual user action; LIF
 
 - `search_public_resources()` searches public provider/resource information and labels fallback data when external search is unavailable.
 - `check_provider_website()` performs basic public website checks through the existing MCP-style HTTP checker.
+- `geocode_location_google()` geocodes Step 2 search-area locations when a Google Maps key is configured.
 - `geocode_provider_locations()` uses `GOOGLE_MAPS_API_KEY` from Streamlit secrets or environment variables when configured.
+- `build_google_maps_link()` creates provider map links from coordinates or location text.
 - `render_google_map()` prepares mapped provider rows and Google Maps links when coordinates are available.
+- `render_google_map_or_pydeck_map()` preserves the map-render helper expected by the app/tests.
 - `generate_outreach_email()` creates a reviewed, editable outreach draft.
 - `generate_call_script()` creates a manual phone-call script for the user.
 - `send_email_smtp()` sends only approved email through SMTP credentials from secrets or environment variables.
@@ -48,10 +51,19 @@ Secrets are never hardcoded and should not be committed.
 | timestamp | action | status | data_source | message |
 | --- | --- | --- | --- | --- |
 | 2026-06-23 10:15:02 | User need received | completed | local/session data | The guided intake was submitted. |
+| 2026-06-23 10:15:02 | Primary location received | completed | local/session data | Primary search location was received from Step 2. |
+| 2026-06-23 10:15:02 | Additional locations received/skipped | completed | local/session data | 1 additional location received. |
+| 2026-06-23 10:15:02 | Search radius received | completed | local/session data | Search radius received: 25 miles. |
+| 2026-06-23 10:15:02 | Transportation limits received | completed | local/session data | Transportation limit received. |
+| 2026-06-23 10:15:02 | Preferred access received | completed | local/session data | Preferred access received. |
+| 2026-06-23 10:15:02 | Optional contact info received | skipped | local/session data | No optional contact preferences were provided. |
+| 2026-06-23 10:15:02 | File upload received | skipped | local/session data | No optional files were uploaded. |
+| 2026-06-23 10:15:02 | Link reference received | skipped | local/session data | No optional links were provided. |
 | 2026-06-23 10:15:03 | Public resource search started | completed | real external API/tool data | Searching public provider information with OpenStreetMap Nominatim. |
 | 2026-06-23 10:15:05 | Provider candidates found | completed | real external API/tool data | 5 provider candidate rows prepared. |
 | 2026-06-23 10:15:07 | Provider website checked | completed | real external API/tool data | Provider website status returned. |
-| 2026-06-23 10:15:08 | Provider locations geocoded | skipped | local/session data | GOOGLE_MAPS_API_KEY is not configured. Existing coordinates are kept when public search returned them. |
+| 2026-06-23 10:15:08 | Google Maps/geocoding | skipped | local/session data | GOOGLE_MAPS_API_KEY is not configured. Typed location text and public-search coordinates are used. |
+| 2026-06-23 10:15:08 | Provider map links created | completed | local/session data | Existing provider coordinates and location text were used for map links. |
 | 2026-06-23 10:15:09 | Outreach email draft created | completed | local/session data | Editable outreach draft prepared for human review. |
 | 2026-06-23 10:15:09 | Tracker rows created | completed | local/session data | 5 tracker rows prepared. |
 | 2026-06-23 10:15:09 | SMTP email sending | skipped | local/session data | SMTP email is only sent from the review panel after explicit approval. |
@@ -71,9 +83,27 @@ The live app also includes a `human_approval_required` column. Outreach email dr
   "Progress %": 10,
   "Next Action": "Verify eligibility, hours, availability, and intake process.",
   "Outcome": "",
-  "Notes": "Public search result; confirm before relying on this provider."
+  "Notes": "Public search result; confirm before relying on this provider.",
+  "user_preferred_contact_method": "Not sure",
+  "user_outreach_language": "",
+  "user_email_provided": "no",
+  "supporting_files_count": 0,
+  "supporting_links_count": 0,
+  "notes_from_user_context": ""
 }
 ```
+
+## LIFT Character Guides and Optional Context
+
+Step 4 includes five guide cards:
+
+- Lia is the main guide and selects the full plan.
+- Scout maps to Locate actions: public search, provider website checks, and Google map.
+- Ivy maps to Identify actions: resource fit summary, barriers/gaps, and backup options.
+- Ember maps to Follow-up actions: email drafts and call scripts.
+- Tally maps to Track actions: tracker rows and CSV download.
+
+The optional context card accepts optional email, preferred contact method, outreach language, best contact time, user notes, uploads, and links. Email is not required. Uploaded files are session-only unless storage is added later; current output shows names/types and does not claim full file or photo understanding. Google Drive or Google Docs links are reference links only unless a future authenticated Google Drive integration is added.
 
 ## Example Provider Confidence Label
 
@@ -106,9 +136,10 @@ Missing SMTP credentials produce a setup/skip message and do not crash the app.
 ## Google Maps / Geocoding Flow
 
 1. LIFT uses provider addresses or public-search location strings.
-2. If `GOOGLE_MAPS_API_KEY` is configured, `geocode_provider_locations()` requests coordinates from Google Maps.
-3. Mapped rows include latitude, longitude, and Google Maps links when available.
-4. If the key is missing or an address is incomplete, the action is logged as skipped or failed, and available location text remains visible.
+2. Step 2 search area geocoding and provider geocoding use `GOOGLE_MAPS_API_KEY` from `st.secrets` or environment variables only.
+3. If `GOOGLE_MAPS_API_KEY` is configured, `geocode_location_google()` and `geocode_provider_locations()` request coordinates from Google Maps.
+4. Mapped rows include latitude, longitude, geocoding status, and Google Maps links when available.
+5. If the key is missing or an address is incomplete, the action is logged as skipped or failed, and available location text remains visible.
 
 ## Failure and Fallback Handling
 
@@ -241,8 +272,8 @@ LIFT Agent demonstrates a real agentic workflow, not just text generation:
 │    - Confirmation checklists                                    │
 │    - Follow-up dates                                            │
 │                                                                  │
-│  Next Step: User copy/pastes into email client and hits SEND    │
-│  App Role: DRAFT GENERATOR, NOT SENDER                          │
+│  Next Step: User manually sends or approves SMTP in-app    │
+│  App Role: HUMAN-SUPERVISED OUTREACH SUPPORT                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -369,7 +400,7 @@ Uses **real public HTTP requests** when a provider URL is available:
 **Required before generating:**
 - Synthetic data acknowledgment
 - No sensitive information agreement
-- No automation confirmation
+- Human-supervised automation confirmation
 - Human approval requirement
 
 ### 2. Provider Selection
@@ -384,11 +415,11 @@ Uses **real public HTTP requests** when a provider URL is available:
 - Confirmation checklist
 - Follow-up date
 
-### 4. Export (Not Send)
+### 4. Export or Approved SMTP Send
 **Final step:**
 - Download as text file
-- User must copy/paste
-- User manually hits Send in their email client
+- User may manually copy/paste into their email client
+- SMTP send requires configured credentials, an editable message, an approval checkbox, and the `Send approved email` button
 
 ### 5. Session Case Record
 **MVP record handling:**
@@ -495,10 +526,10 @@ st.session_state["case_history"]  # User-saved case records for the current sess
 ### Current Limitations
 
 1. **No real web scraping** – MCP-style provider check uses public HTTP requests but does not execute JavaScript, log in, or submit forms
-2. **No email sending** – User must manually send
+2. **Human-supervised email sending only** – SMTP requires credentials and explicit approval; otherwise the user manually sends drafts
 3. **No provider database sync** – Public search results are not a formal 211-style human-services directory
 4. **No authentication** – Anyone can access
-5. **No audit logging** – No compliance records
+5. **Activity Log is not compliance-grade** – Agent Activity Log records action status, source, and approval flags, but it is not a compliance audit log
 
 ### Future Enhancements
 
@@ -525,4 +556,5 @@ LIFT Agent successfully demonstrates:
 ✅ **Privacy-first design** – Consent up front, session-only option  
 
 This is a human-supervised agent that demonstrates responsible AI development.
+
 

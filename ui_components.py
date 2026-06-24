@@ -347,6 +347,67 @@ def inject_global_styles() -> None:
             line-height: 1.42;
         }}
 
+        .lift-guide-card {{
+            min-height: 190px;
+            background: #FFFDF8;
+            border: 1px solid #A9D7D2;
+            border-radius: 10px;
+            padding: 0.95rem;
+            margin-bottom: 0.65rem;
+            box-shadow: 0 10px 28px rgba(31, 122, 120, 0.08);
+        }}
+
+        .lift-guide-portrait {{
+            width: 54px;
+            height: 54px;
+            border-radius: 999px;
+            background: #F7EEDC;
+            border: 2px solid #C9574D;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: {LIFT_COLORS['deep_teal']};
+            font-size: 1.45rem;
+            font-weight: 850;
+            margin-bottom: 0.5rem;
+        }}
+
+        .lift-guide-name {{
+            color: {LIFT_COLORS['deep_teal']};
+            font-weight: 850;
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+        }}
+
+        .lift-guide-role {{
+            color: #C9574D;
+            font-size: 0.86rem;
+            font-weight: 800;
+            margin-bottom: 0.45rem;
+        }}
+
+        .lift-guide-desc {{
+            color: {LIFT_COLORS['text']};
+            font-size: 0.9rem;
+            line-height: 1.38;
+        }}
+
+        .lift-guide-actions {{
+            color: {LIFT_COLORS['muted_text']};
+            font-size: 0.82rem;
+            line-height: 1.35;
+            margin-top: 0.55rem;
+        }}
+
+        .lift-preview-card {{
+            background: #FFFDF8;
+            border: 1px solid #A9D7D2;
+            border-left: 5px solid #C9574D;
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
+            margin: 0.45rem 0 0.8rem 0;
+        }}
+
         .lift-small-note {{
             color: {LIFT_COLORS['muted_text']};
             font-size: 0.92rem;

@@ -7,13 +7,29 @@ Manual and code-level checks for this update should verify:
 - App starts successfully with `streamlit run app.py`.
 - First visible main button is `Start your LIFT plan` and jumps to `1. Tell LIFT what you need`.
 - Consent labels are plain text, without extra checkmark symbols inside labels.
+- Step 2 title is `2. Where should LIFT look?`.
+- Step 2 accepts `Grand Rapids, MI` as the primary location and `East Lansing, MI` as an additional location.
+- Search radius slider ranges from 5 to 100 miles.
+- Transportation limits include No, Limited, Public transportation only, Walking only, Ride share only, I have transportation, and Not sure.
+- Preferred access includes Nearby, Online, Phone, Walk-in, Appointment, 24/7 or after-hours, and No preference.
+- Search area preview appears directly under Step 2.
+- If `GOOGLE_MAPS_API_KEY` exists in secrets/environment variables, search locations and providers are geocoded during plan generation.
 - Action selection is grouped into Find, Plan, and Follow up.
+- `Meet your LIFT Guides` appears in Step 4 with Lia, Scout, Ivy, Ember, and Tally.
+- Guide buttons select matching action checkboxes, and manual selection remains available afterward.
+- Optional email, preferred contact method, outreach language, notes, uploads, and links are optional and do not block generation.
+- Uploaded file names/types can be shown, but the app does not claim full file/photo understanding.
+- Google Drive or Google Docs links are stored as reference links only.
 - Missing `GOOGLE_MAPS_API_KEY` logs Google geocoding as skipped instead of crashing.
 - Missing SMTP secrets show a setup/skip message instead of crashing.
 - SMTP send requires editable recipient, subject, body, explicit approval checkbox, and the `Send approved email` button.
 - Agent Activity Log appears after generation with status and data-source labels.
+- Agent Activity Log records completed/skipped/failed/fallback actions and does not expose the optional user email address.
+- Provider rows include latitude, longitude, geocoding status, and map links when available.
+- Map View appears, or explains when no mapped provider results are available.
 - CSV tracker download remains available when tracker rows are created.
 - Phone-call output states that LIFT does not place phone calls and that the script is for the user to use manually.
+- Tracker CSV includes optional context columns: preferred contact method, outreach language, email-provided yes/no, supporting file/link counts, and user-context notes.
 
 ## 2026-06-23 Visual Identity Verification
 

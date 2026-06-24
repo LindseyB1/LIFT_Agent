@@ -1242,22 +1242,135 @@ def google_maps_key_present():
     return bool(get_secret_or_env("GOOGLE_MAPS_API_KEY"))
 
 
-def geocode_provider_locations(providers, log_entries):
+def build_google_maps_link(address_or_lat_lng):
+    """Build a Google Maps search link from an address string or lat/lng pair."""
+    if isinstance(address_or_lat_lng, (tuple, list)) and len(address_or_lat_lng) >= 2:
+        try:
+            return f"https://www.google.com/maps/search/?api=1&query={float(address_or_lat_lng[0])},{float(address_or_lat_lng[1])}"
+        except (TypeError, ValueError):
+            return ""
+    query = str(address_or_lat_lng or "").strip()
+    if not query:
+        return ""
+    return f"https://www.google.com/maps/search/?api=1&query={urlencode({'q': query})[2:]}"
+
+
+def geocode_location_google(location_text, api_key):
+    """Geocode one user-entered location with Google Maps. Returns a status dict."""
+    if not str(location_text or "").strip():
+        return {"location_text": location_text, "status": "skipped", "error": "No location text provided."}
+    if not api_key:
+        return {"location_text": location_text, "status": "skipped", "error": "GOOGLE_MAPS_API_KEY is not configured."}
+
+    try:
+        params = urlencode({"address": location_text, "key": api_key})
+        url = f"https://maps.googleapis.com/maps/api/geocode/json?{params}"
+        request = Request(url, headers={"User-Agent": get_public_api_user_agent()})
+        with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload.get("status") == "OK" and payload.get("results"):
+            result = payload["results"][0]
+            coords = result["geometry"]["location"]
+            lat = float(coords["lat"])
+            lon = float(coords["lng"])
+            return {
+                "location_text": location_text,
+                "status": "completed",
+                "formatted_address": result.get("formatted_address", location_text),
+                "lat": lat,
+                "lon": lon,
+                "map_link": build_google_maps_link((lat, lon)),
+            }
+        return {
+            "location_text": location_text,
+            "status": "failed",
+            "error": payload.get("status", "unknown"),
+        }
+    except Exception as error:
+        return {
+            "location_text": location_text,
+            "status": "failed",
+            "error": f"{type(error).__name__}: {error}",
+        }
+
+
+def geocode_search_locations(primary_location, additional_locations, log_entries):
     api_key = get_secret_or_env("GOOGLE_MAPS_API_KEY")
+    locations = [primary_location] + list(additional_locations or [])
+    locations = [loc for loc in locations if str(loc or "").strip()]
+
     if not api_key:
         log_agent_action(
             log_entries,
-            "Google geocoding",
+            "Google Maps/geocoding",
             "skipped",
             "local/session data",
-            "GOOGLE_MAPS_API_KEY is not configured. Existing coordinates are kept when public search returned them.",
+            "GOOGLE_MAPS_API_KEY is not configured. LIFT will use typed location text and any coordinates from public search results.",
         )
-        return providers, {"configured": False, "geocoded_count": 0, "errors": []}
+        return {"configured": False, "locations": [], "completed_count": 0, "failed_count": 0}
+
+    results = [geocode_location_google(location, api_key) for location in locations]
+    completed = [result for result in results if result.get("status") == "completed"]
+    failed = [result for result in results if result.get("status") == "failed"]
+    status = "completed" if completed else "failed"
+    message = (
+        f"{len(completed)} search location(s) geocoded with Google Maps."
+        if completed
+        else "Google Maps geocoding was configured but no search locations were geocoded."
+    )
+    log_agent_action(
+        log_entries,
+        "Google Maps/geocoding",
+        status,
+        "real external API/tool data",
+        message,
+        {"completed_count": len(completed), "failed_count": len(failed), "locations": results},
+    )
+    return {
+        "configured": True,
+        "locations": results,
+        "completed_count": len(completed),
+        "failed_count": len(failed),
+    }
+
+
+def geocode_provider_locations(provider_rows, api_key=None, log_entries=None):
+    if isinstance(api_key, list) and log_entries is None:
+        log_entries = api_key
+        api_key = None
+    if api_key is None:
+        api_key = get_secret_or_env("GOOGLE_MAPS_API_KEY")
+    log_entries = log_entries if log_entries is not None else []
+    providers = provider_rows or []
+    if not api_key:
+        log_agent_action(
+            log_entries,
+            "Provider map links created",
+            "skipped",
+            "local/session data",
+            "GOOGLE_MAPS_API_KEY is not configured. Existing coordinates and typed locations are used for map links when possible.",
+        )
+        updated = []
+        for provider in providers:
+            row = dict(provider)
+            row.setdefault("geocoding_status", "skipped")
+            if row.get("lat") not in ["", None] and row.get("lon") not in ["", None]:
+                row["map_link"] = row.get("map_link") or build_google_maps_link((row.get("lat"), row.get("lon")))
+            else:
+                row["map_link"] = row.get("map_link") or build_google_maps_link(row.get("area_served") or row.get("city"))
+            updated.append(row)
+        return updated, {"configured": False, "geocoded_count": 0, "errors": []}
 
     geocoded = []
     errors = []
     for provider in providers:
         updated = dict(provider)
+        updated.setdefault("geocoding_status", "not attempted")
+        if updated.get("lat") not in ["", None] and updated.get("lon") not in ["", None]:
+            updated["map_link"] = updated.get("map_link") or build_google_maps_link((updated.get("lat"), updated.get("lon")))
+            updated["geocoding_status"] = "existing coordinates"
+            geocoded.append(updated)
+            continue
         query = (
             updated.get("area_served")
             or " ".join(
@@ -1268,38 +1381,44 @@ def geocode_provider_locations(providers, log_entries):
         )
         if not query.strip():
             errors.append(f"{updated.get('resource_name', 'Provider')}: no mappable address.")
+            updated["geocoding_status"] = "skipped"
             geocoded.append(updated)
             continue
         try:
-            params = urlencode({"address": query, "key": api_key})
-            url = f"https://maps.googleapis.com/maps/api/geocode/json?{params}"
-            request = Request(url, headers={"User-Agent": get_public_api_user_agent()})
-            with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            if payload.get("status") == "OK" and payload.get("results"):
-                location = payload["results"][0]["geometry"]["location"]
-                updated["lat"] = float(location["lat"])
-                updated["lon"] = float(location["lng"])
-                updated["map_link"] = f"https://www.google.com/maps/search/?api=1&query={updated['lat']},{updated['lon']}"
+            result = geocode_location_google(query, api_key)
+            if result.get("status") == "completed":
+                updated["lat"] = result["lat"]
+                updated["lon"] = result["lon"]
+                updated["map_link"] = result["map_link"]
                 updated["geocode_source"] = "Google Maps Geocoding API"
+                updated["geocoding_status"] = "completed"
             else:
-                errors.append(f"{updated.get('resource_name', 'Provider')}: {payload.get('status', 'unknown')}")
+                updated["geocoding_status"] = "failed"
+                updated["map_link"] = updated.get("map_link") or build_google_maps_link(query)
+                errors.append(f"{updated.get('resource_name', 'Provider')}: {result.get('error', 'unknown')}")
         except Exception as error:
+            updated["geocoding_status"] = "failed"
+            updated["map_link"] = updated.get("map_link") or build_google_maps_link(query)
             errors.append(f"{updated.get('resource_name', 'Provider')}: {type(error).__name__}: {error}")
         geocoded.append(updated)
         time.sleep(0.1)
 
     count = sum(1 for provider in geocoded if provider.get("geocode_source") == "Google Maps Geocoding API")
-    status = "completed" if count else "failed"
+    linked_count = sum(1 for provider in geocoded if provider.get("map_link"))
+    status = "completed" if linked_count else "failed"
     log_agent_action(
         log_entries,
-        "Provider locations geocoded",
+        "Provider map links created",
         status,
         "real external API/tool data",
-        f"{count} provider location(s) geocoded with Google Maps.",
-        {"configured": True, "geocoded_count": count, "errors": errors},
+        f"{count} provider location(s) geocoded and {linked_count} provider map link(s) prepared with Google Maps.",
+        {"configured": True, "geocoded_count": count, "map_link_count": linked_count, "errors": errors},
     )
-    return geocoded, {"configured": True, "geocoded_count": count, "errors": errors}
+    return geocoded, {"configured": True, "geocoded_count": count, "map_link_count": linked_count, "errors": errors}
+
+
+def render_google_map_or_pydeck_map(providers=None, log_entries=None):
+    return render_google_map(providers or st.session_state.get("tool_result", {}).get("matched_resources", []), log_entries or [])
 
 
 def render_google_map(providers, log_entries):
@@ -1515,6 +1634,18 @@ def create_tracker_rows(tool_result, log_entries):
         "local/session data",
         f"{len(rows)} tracker row(s) prepared.",
     )
+    return rows
+
+
+def add_optional_context_to_tracker_rows(tool_result, context):
+    rows = tool_result.get("tracker_rows", [])
+    for row in rows:
+        row["user_preferred_contact_method"] = context.get("user_preferred_contact_method", "")
+        row["user_outreach_language"] = context.get("user_outreach_language", "")
+        row["user_email_provided"] = context.get("user_email_provided", "no")
+        row["supporting_files_count"] = context.get("supporting_files_count", 0)
+        row["supporting_links_count"] = len(context.get("supporting_links", []))
+        row["notes_from_user_context"] = context.get("notes_from_user_context", "")
     return rows
 
 
@@ -2351,14 +2482,27 @@ def render_generate_page():
     st.header("2. Where should LIFT look?")
     loc_col1, loc_col2, loc_col3 = st.columns(3)
     with loc_col1:
-        primary_location = st.text_input(get_text("Primary search location", language), value="Grand Rapids, MI")
+        primary_location = st.text_input(
+            get_text("Primary search location", language),
+            value=st.session_state.get("primary_location", "Grand Rapids, MI"),
+            key="primary_location",
+        )
     with loc_col2:
         additional_locations_text = st.text_input(
             get_text("Additional locations", language),
-            placeholder="Walker, MI; Kentwood, MI; Wyoming, MI",
+            value=st.session_state.get("additional_locations_text", "East Lansing, MI"),
+            placeholder="East Lansing, MI",
+            key="additional_locations_text",
         )
     with loc_col3:
-        radius_miles = st.slider(get_text("Search radius in miles", language), 5, 100, 25, step=5)
+        radius_miles = st.slider(
+            get_text("Search radius in miles", language),
+            5,
+            100,
+            st.session_state.get("radius_miles", 25),
+            step=5,
+            key="radius_miles",
+        )
 
     additional_locations = [
         item.strip()
@@ -2368,13 +2512,42 @@ def render_generate_page():
 
     access_col1, access_col2 = st.columns(2)
     with access_col1:
-        transportation = st.selectbox("Transportation limits", ["Yes", "No", "Limited", "Public transit only"])
+        transportation = st.selectbox(
+            "Transportation limits",
+            [
+                "No",
+                "Limited",
+                "Public transportation only",
+                "Walking only",
+                "Ride share only",
+                "I have transportation",
+                "Not sure",
+            ],
+            key="transportation_limits",
+        )
     with access_col2:
         access_modes = st.multiselect(
             "Preferred access",
-            ["Nearby", "Bus-accessible", "Online", "Phone-based"],
-            default=["Nearby"],
+            ["Nearby", "Online", "Phone", "Walk-in", "Appointment", "24/7 or after-hours", "No preference"],
+            default=st.session_state.get("preferred_access", ["Nearby", "Online"]),
+            key="preferred_access",
         )
+
+    additional_preview = ", ".join(additional_locations) if additional_locations else "no additional locations"
+    preferred_preview = " and ".join(access_modes) if access_modes else "No preference"
+    st.markdown(
+        f"""
+        <div class="lift-preview-card">
+            <strong style="color:#0E5F73;">Search area preview</strong>
+            <div style="margin-top:0.3rem;color:#24302F;">
+                LIFT will start near {primary_location or 'Grand Rapids, MI'} and also consider {additional_preview}
+                within {radius_miles} miles where appropriate. Transportation limit: {transportation}.
+                Preferred access: {preferred_preview}.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.header("3. Access barriers and fit")
     c1, c2, c3 = st.columns(3)
@@ -2420,7 +2593,49 @@ def render_generate_page():
         documents_available = "No" if st.checkbox("Documentation concerns", value=False) else "Yes"
         eligibility_concerns = st.checkbox("Eligibility concerns", value=False)
     with barrier_cols[2]:
-        accessibility_barriers = st.checkbox("Accessibility or transportation barriers", value=(transportation != "Yes"))
+        accessibility_barriers = st.checkbox("Accessibility or transportation barriers", value=(transportation != "I have transportation"))
+
+    with st.container(border=True):
+        st.markdown("**Optional: Add contact info, files, or links**")
+        st.caption(
+            "Uploads and links are optional. LIFT uses them only to improve this session's plan. "
+            "Do not upload classified, restricted, or highly sensitive personal information."
+        )
+        contact_cols = st.columns(2)
+        with contact_cols[0]:
+            user_email = st.text_input("User email address, optional", key="optional_user_email")
+            preferred_contact_method = st.selectbox(
+                "Preferred contact method, optional",
+                ["Not sure", "Email", "Phone call by user", "Text message by user", "Print/save only"],
+                key="preferred_contact_method",
+            )
+            outreach_language = st.text_input("Preferred outreach language, optional", key="preferred_outreach_language")
+        with contact_cols[1]:
+            best_contact_time = st.text_input("Best time to contact providers, optional", key="best_contact_time")
+            include_email_in_drafts = st.checkbox(
+                "Include my email address in outreach drafts.",
+                value=False,
+                key="include_email_in_drafts",
+            )
+            supporting_links_text = st.text_area(
+                "Paste optional links, such as a Google Drive, Google Doc, website, or resource list link",
+                key="supporting_links_text",
+                height=92,
+            )
+        notes_from_user_context = st.text_area("Anything else LIFT should know?", key="notes_from_user_context", height=95)
+        uploaded_files = st.file_uploader(
+            "Upload optional supporting files or photos",
+            type=["pdf", "txt", "csv", "docx", "png", "jpg", "jpeg"],
+            accept_multiple_files=True,
+            key="supporting_uploads",
+        )
+        if uploaded_files:
+            st.caption(
+                "Uploaded file names/types are used as session context. LIFT does not claim full file or photo understanding in this version."
+            )
+            for uploaded_file in uploaded_files:
+                st.write(f"- {uploaded_file.name} ({uploaded_file.type or 'unknown type'})")
+        st.caption("Google Drive or Google Docs links are stored as reference links only unless a future authenticated Google Drive integration is added.")
 
     context = {
         "audience": audience,
@@ -2435,6 +2650,15 @@ def render_generate_page():
         "appointment_okay": appointment_okay,
         "eligibility_concerns": eligibility_concerns,
         "accessibility_barriers": accessibility_barriers,
+        "user_preferred_contact_method": preferred_contact_method,
+        "user_outreach_language": outreach_language,
+        "user_email_provided": "yes" if user_email.strip() else "no",
+        "include_user_email_in_drafts": include_email_in_drafts,
+        "best_contact_time": best_contact_time,
+        "supporting_files_count": len(uploaded_files or []),
+        "supporting_file_names": [uploaded_file.name for uploaded_file in uploaded_files or []],
+        "supporting_links": [line.strip() for line in supporting_links_text.splitlines() if line.strip()],
+        "notes_from_user_context": notes_from_user_context,
     }
 
     with st.expander(get_text("Optional Context", language), expanded=False):
@@ -2470,6 +2694,64 @@ def render_generate_page():
     context["optional_context"] = selected_optional
 
     st.header("4. Choose agent actions")
+    st.subheader("Meet your LIFT Guides")
+    st.markdown("You can choose one guide or let several guides work together on your LIFT plan.")
+    guide_cards = [
+        ("Lia", "the main LIFT guide", "Hi, I'm Lia. I'll help organize what you need and guide you through your LIFT plan.", []),
+        ("Scout", "Locate", "I help find public provider options based on your need and location.", ["Search public provider options", "Check provider websites", "Show Google map"]),
+        ("Ivy", "Identify", "I help notice barriers early so your plan is more realistic and useful.", ["Create resource fit summary", "Identify barriers and gaps", "Create three backup options"]),
+        ("Ember", "Follow-up", "I help prepare outreach drafts and call scripts you can review and use.", ["Generate email draft", "Generate call script"]),
+        ("Tally", "Track", "I help track your next steps so nothing gets lost.", ["Create tracker rows", "Create CSV tracker download"]),
+    ]
+    guide_cols = st.columns(5)
+    for idx, (name, role, description, actions) in enumerate(guide_cards):
+        with guide_cols[idx]:
+            action_text = "<br>".join(actions) if actions else "Guides the full plan"
+            st.markdown(
+                f"""
+                <div class="lift-guide-card">
+                    <div class="lift-guide-portrait">{name[0]}</div>
+                    <div class="lift-guide-name">{name}</div>
+                    <div class="lift-guide-role">{role}</div>
+                    <div class="lift-guide-desc">{description}</div>
+                    <div class="lift-guide-actions">{action_text}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Choose {name}", key=f"guide_{name.lower()}", width="stretch"):
+                if name == "Scout":
+                    for key in ["act_search", "act_websites", "act_map"]:
+                        st.session_state[key] = True
+                elif name == "Ivy":
+                    for key in ["act_fit", "act_gaps", "act_backup"]:
+                        st.session_state[key] = True
+                elif name == "Ember":
+                    for key in ["act_email", "act_call"]:
+                        st.session_state[key] = True
+                elif name == "Tally":
+                    for key in ["act_tracker", "act_csv"]:
+                        st.session_state[key] = True
+                else:
+                    for key in ["act_search", "act_websites", "act_map", "act_fit", "act_gaps", "act_backup", "act_email", "act_call", "act_tracker", "act_csv"]:
+                        st.session_state[key] = True
+                st.rerun()
+
+    quick_cols = st.columns(5)
+    quick_picks = [
+        ("Help me choose", ["act_search", "act_websites", "act_map", "act_fit", "act_gaps", "act_backup", "act_email", "act_call", "act_tracker", "act_csv"]),
+        ("I want to find resources", ["act_search", "act_websites", "act_map"]),
+        ("I need help planning", ["act_fit", "act_gaps", "act_backup"]),
+        ("I want outreach help", ["act_email", "act_call"]),
+        ("I need help staying organized", ["act_tracker", "act_csv"]),
+    ]
+    for idx, (label, keys) in enumerate(quick_picks):
+        with quick_cols[idx]:
+            if st.button(label, key=f"quick_pick_{idx}", width="stretch"):
+                for key in keys:
+                    st.session_state[key] = True
+                st.rerun()
+
     st.caption("Choose what LIFT should do:")
     action_cols = st.columns(3)
     with action_cols[0]:
@@ -2544,6 +2826,51 @@ def render_generate_page():
 
         agent_log = []
         log_agent_action(agent_log, "User need received", "completed", "local/session data", "The guided intake was submitted.")
+        log_agent_action(agent_log, "Primary location received", "completed", "local/session data", "Primary search location was received from Step 2.")
+        log_agent_action(
+            agent_log,
+            "Additional locations received/skipped",
+            "completed" if additional_locations else "skipped",
+            "local/session data",
+            f"{len(additional_locations)} additional location(s) received." if additional_locations else "No additional locations were provided.",
+        )
+        log_agent_action(agent_log, "Search radius received", "completed", "local/session data", f"Search radius received: {radius_miles} miles.")
+        log_agent_action(agent_log, "Transportation limits received", "completed", "local/session data", f"Transportation limit received: {transportation}.")
+        log_agent_action(agent_log, "Preferred access received", "completed", "local/session data", f"Preferred access received: {', '.join(access_modes) if access_modes else 'No preference'}.")
+        log_agent_action(
+            agent_log,
+            "Optional contact info received",
+            "completed" if any([user_email.strip(), preferred_contact_method != "Not sure", outreach_language.strip(), best_contact_time.strip()]) else "skipped",
+            "local/session data",
+            "Optional contact preferences were received." if any([user_email.strip(), preferred_contact_method != "Not sure", outreach_language.strip(), best_contact_time.strip()]) else "No optional contact preferences were provided.",
+        )
+        log_agent_action(
+            agent_log,
+            "Additional context received",
+            "completed" if notes_from_user_context.strip() else "skipped",
+            "local/session data",
+            "Additional user context notes were received." if notes_from_user_context.strip() else "No additional context notes were provided.",
+        )
+        log_agent_action(
+            agent_log,
+            "File upload received",
+            "completed" if uploaded_files else "skipped",
+            "local/session data",
+            f"{len(uploaded_files or [])} optional file(s) attached for this session." if uploaded_files else "No optional files were uploaded.",
+        )
+        supporting_links = context.get("supporting_links", [])
+        log_agent_action(
+            agent_log,
+            "Link reference received",
+            "completed" if supporting_links else "skipped",
+            "local/session data",
+            f"{len(supporting_links)} optional link reference(s) stored for this session." if supporting_links else "No optional links were provided.",
+        )
+        search_geocode_trace = geocode_search_locations(primary_location, additional_locations, agent_log)
+        st.session_state["search_area_geocode_trace"] = search_geocode_trace
+        st.session_state["geocoded_search_locations"] = [
+            item for item in search_geocode_trace.get("locations", []) if item.get("status") == "completed"
+        ]
         emergency_terms = [
             "immediate danger",
             "self-harm",
@@ -2693,6 +3020,8 @@ def render_generate_page():
             if act_email:
                 first_provider = tool_result.get("matched_resources", [{}])[0] if tool_result.get("matched_resources") else {}
                 email_draft = generate_outreach_email(user_need, first_provider, language_access_needed)
+                if include_email_in_drafts and user_email.strip():
+                    email_draft["body"] += f"\n\nPreferred reply email: {user_email.strip()}"
                 tool_result["smtp_email_draft"] = email_draft
                 log_agent_action(
                     agent_log,
@@ -2716,6 +3045,7 @@ def render_generate_page():
 
             if act_tracker:
                 create_tracker_rows(tool_result, agent_log)
+                add_optional_context_to_tracker_rows(tool_result, context)
             else:
                 tool_result["tracker_rows"] = []
                 log_agent_action(agent_log, "Tracker rows created", "skipped", "local/session data", "User did not select tracker rows.")
@@ -2842,6 +3172,9 @@ def render_generate_page():
                         "eligibility",
                         "status",
                         "distance_miles",
+                        "lat",
+                        "lon",
+                        "geocoding_status",
                         "map_link",
                         "confidence_label",
                         "next_best_action",
@@ -2865,9 +3198,31 @@ def render_generate_page():
                     contact = provider.get("group_email") or provider.get("phone") or "Contact not returned"
                     st.markdown(f"- Contact: {contact}")
                     st.divider()
-                if st.session_state.get("provider_checks"):
-                    with st.expander("Provider website check details", expanded=False):
-                        st.json(st.session_state["provider_checks"])
+
+        with st.container(border=True):
+            st.subheader("Selected Provider Checks")
+            if st.session_state.get("provider_checks"):
+                checks_df = pd.DataFrame(st.session_state["provider_checks"])
+                display_check_cols = [
+                    col
+                    for col in [
+                        "provider_name",
+                        "website_status",
+                        "http_status",
+                        "confidence",
+                        "basic_contact_found",
+                        "hours_label",
+                        "cost_label",
+                        "appointment_required",
+                        "checked_at",
+                    ]
+                    if col in checks_df.columns
+                ]
+                st.dataframe(checks_df[display_check_cols], width="stretch")
+                with st.expander("Provider website check details", expanded=False):
+                    st.json(st.session_state["provider_checks"])
+            else:
+                st.info("No selected provider checks were run for this plan.")
 
         with st.container(border=True):
             st.subheader("Executive Map Summary")
@@ -2901,7 +3256,7 @@ def render_generate_page():
                     st.write(st.session_state["geocode_trace"]["errors"])
 
         with st.container(border=True):
-            st.subheader("Barriers and Gaps to Confirm")
+            st.subheader("Gap Analysis")
             gap_items = (
                 tool_result.get("access_barriers", [])
                 + tool_result.get("eligibility_barriers", [])
@@ -2919,7 +3274,7 @@ def render_generate_page():
                     st.markdown(f"- {step}")
 
         with st.container(border=True):
-            st.subheader("Outreach Email Draft")
+            st.subheader("Outreach Email Drafts")
             draft = tool_result.get("smtp_email_draft", {})
             email_to = st.text_input("Recipient email", value=draft.get("recipient", ""), key="smtp_to")
             email_subject = st.text_input("Subject", value=draft.get("subject", ""), key="smtp_subject")
@@ -2949,6 +3304,7 @@ def render_generate_page():
 
         with st.container(border=True):
             st.subheader("Call Script")
+            st.caption("LIFT does not place phone calls. This script is prepared for the user to review and use when calling.")
             call_script = tool_result.get("call_script") or generate_call_script(
                 st.session_state.get("user_need", ""),
                 tool_result.get("matched_resources", [{}])[0] if tool_result.get("matched_resources") else {},
@@ -2965,7 +3321,7 @@ def render_generate_page():
                 st.dataframe(tracker_df, width="stretch")
 
         with st.container(border=True):
-            st.subheader("CSV Download")
+            st.subheader("Downloads")
             if not tracker_df.empty:
                 st.download_button(
                     "Download Tracker CSV",
@@ -2981,6 +3337,18 @@ def render_generate_page():
                 mime="text/csv",
                 width="stretch",
             )
+
+        with st.container(border=True):
+            st.subheader("Agent Decision Trace")
+            trace_tabs = st.tabs(["Route", "Tool", "Data", "Search Area Geocoding"])
+            with trace_tabs[0]:
+                st.json(st.session_state.get("route_trace", {}))
+            with trace_tabs[1]:
+                st.json(st.session_state.get("tool_trace", {}))
+            with trace_tabs[2]:
+                st.json(st.session_state.get("data_source_trace", {}))
+            with trace_tabs[3]:
+                st.json(st.session_state.get("search_area_geocode_trace", {}))
 
     return
 

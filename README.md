@@ -8,8 +8,10 @@ Real digital actions in the Streamlit app include:
 
 - Public resource search with OpenStreetMap Nominatim when available
 - Basic public provider website checks
-- Google Maps/geocoding when `GOOGLE_MAPS_API_KEY` is configured
+- Step 2 search-area preview and Google Maps/geocoding when `GOOGLE_MAPS_API_KEY` is configured from Streamlit secrets or environment variables
 - Executive-style map summary, category labels, provider map links, and confidence labels
+- LIFT character guide cards: Lia, Scout, Ivy, Ember, and Tally
+- Optional user email, preferred contact method, outreach language, session-only upload names/types, and reference links
 - Editable outreach email draft generation
 - Manual call script generation; LIFT does not place calls
 - Approved SMTP email sending after explicit human review
@@ -59,7 +61,15 @@ The app exposes tool-style functions for the supervised agent loop:
 - `send_email_smtp()`
 - `write_agent_audit_log()`
 
-The results page shows the Agent Activity Log first, then next steps, resource fit, provider options, executive map summary, map links/view, gaps, backups, outreach draft, call script, tracker rows, and CSV downloads.
+The results page shows the Agent Activity Log first, then next steps, resource fit, provider options, selected provider checks, executive map summary, map view, gaps, backups, outreach drafts, call script, tracker rows, downloads, and Agent Decision Trace.
+
+## Guided Intake Additions
+
+Step 2 collects a primary search location, additional locations, radius from 5 to 100 miles, transportation limits, and preferred access. If `GOOGLE_MAPS_API_KEY` exists in `st.secrets` or environment variables, LIFT geocodes the search area and provider locations during plan generation. If the key is missing or geocoding fails, the app logs the skipped/failed action and continues with typed location text and any public-search coordinates.
+
+Step 4 includes guide cards. Lia guides the full plan, Scout selects Find actions, Ivy selects Plan actions, Ember selects outreach and call-script actions, and Tally selects tracker/CSV actions. Manual action checkboxes remain available after any guide or quick-pick selection.
+
+The optional context card accepts an optional email address, contact preferences, outreach language, best contact time, user notes, upload names/types, and links. Uploads are session-only unless storage is added later. Google Drive and Google Docs links are stored as reference links only; the app does not claim Google Drive access without a future authenticated integration. LIFT does not claim full file or photo understanding in this version. User email is optional, is not required for plan generation, and is not shown in the Agent Activity Log.
 
 ## Project Overview
 
@@ -360,7 +370,7 @@ The current implementation performs real public HTTP requests when URLs are avai
 
 - **Public data only:** Resource records come from public external search results when available, with clearly labeled fallback data if that specific API is unavailable.
 - **Public information only:** No private, classified, restricted, protected, or sensitive personal information.
-- **No automation:** Nothing is sent or accessed automatically.
+- **Human-supervised automation only:** Public search, website checks, geocoding, drafts, and tracker exports run only from user-selected actions. SMTP email still requires explicit approval.
 - **Human approval required:** Every outreach draft requires human review before use.
 
 ### Session-Only Output (Optional)
@@ -383,10 +393,10 @@ Users can enable/disable:
 
 1. **Public Search Data:** OpenStreetMap/Nominatim results are real public search results, not a verified human-services directory.
 2. **Basic Verification Only:** Website checks perform basic public HTTP requests, but they do not prove services are currently available.
-3. **No Real Outreach:** Drafts are not sent automatically; human must copy/paste.
+3. **Human-Supervised Outreach:** Drafts are not sent automatically. SMTP email requires credentials, an editable draft, and explicit approval.
 4. **Limited Eligibility Logic:** Barriers are flagged based on heuristics, not true intake forms.
 5. **No Authentication:** Anyone can use the draft app; future versions would add login/role-based access.
-6. **No Audit Log:** Not designed for HIPAA/compliance auditing yet.
+6. **Activity Log Is Not Compliance-Grade:** The Agent Activity Log records completed, skipped, failed, and fallback actions, but it is not a HIPAA/compliance-grade audit log.
 
 ---
 
@@ -454,6 +464,7 @@ git push origin main
    ```
    OPENAI_API_KEY = your_key_here
    P3_DEFAULT_MODEL = gpt-4o-mini
+   GOOGLE_MAPS_API_KEY = your_google_maps_key_here
    ```
 
 ### 4. Deploy
@@ -486,7 +497,7 @@ If no `OPENAI_API_KEY`, the app runs in **Demo Mode**. Demo Mode still attempts 
 
 ### Q: Will LIFT actually send an email?
 
-**A:** No. LIFT generates draft text only. You must copy/paste into your email client and press Send yourself.
+**A:** Only when SMTP is configured and the user explicitly reviews and approves the message in the app. Otherwise LIFT creates editable drafts for manual use.
 
 ### Q: Can I use LIFT with real client data?
 
@@ -494,7 +505,7 @@ If no `OPENAI_API_KEY`, the app runs in **Demo Mode**. Demo Mode still attempts 
 
 ### Q: What if I don't have an OpenAI API key?
 
-**A:** LIFT runs in Demo Mode. It still generates outreach and trackers, but the AI routing decision is replaced with a labeled fallback decision. Full LLM routing requires an API key.
+**A:** LIFT still runs its human-supervised local workflow, public search when available, outreach drafts, map links when possible, and trackers. Live LLM routing requires an API key.
 
 ### Q: Can LIFT scan provider websites or call them?
 
