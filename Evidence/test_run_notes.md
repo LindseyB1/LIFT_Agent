@@ -15,6 +15,16 @@ Manual and code-level checks for this update should verify:
 - CSV tracker download remains available when tracker rows are created.
 - Phone-call output states that LIFT does not place phone calls and that the script is for the user to use manually.
 
+## 2026-06-23 Visual Identity Verification
+
+- Header top spacing was increased so the Streamlit Cloud toolbar should not cover the LIFT logo or title.
+- LIFT logo is larger in the header: desktop uses a responsive 140-180px range; mobile uses about 112px.
+- Dot-art animation is rendered in the main visible flow after the mission text and before Step 1, without requiring any collapsible section to be opened.
+- Dot-art animation also remains available in the lower `How LIFT Works` section.
+- Example chips/buttons use light backgrounds, teal text, soft borders, and coral hover/primary styling instead of dark button styling.
+- Mobile spacing was tightened while preserving enough top padding for the toolbar.
+- Verification run: Streamlit test harness rendered the guided intake with no app exceptions, and live Streamlit boot returned HTTP 200.
+
 **Project:** Project 3 - LIFT Agent (Locate, Identify, Follow-up, Track)  
 **Last Updated:** June 14, 2026  
 **Status:** Updated 2026-06-21 with automated smoke/eval results. Direct unittest run passed after the customer-journey upgrade; pytest could not run locally because pytest is not installed in this Python environment.

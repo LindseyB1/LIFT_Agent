@@ -92,7 +92,7 @@ def inject_global_styles() -> None:
         }}
 
         .block-container {{
-            padding-top: 0.45rem;
+            padding-top: 2.75rem;
             padding-bottom: 2.5rem;
             max-width: 1180px;
         }}
@@ -106,16 +106,16 @@ def inject_global_styles() -> None:
             display: flex;
             align-items: center;
             justify-content: flex-start;
-            gap: 1rem;
-            padding: 0.75rem 0.95rem;
-            margin: 0 0 0.45rem 0;
+            gap: 1.15rem;
+            padding: 1rem 1.15rem;
+            margin: 0.2rem 0 0.45rem 0;
             background: {LIFT_COLORS['background']};
             border: 1px solid {LIFT_COLORS['border']};
             border-radius: 12px;
         }}
 
         .lift-brand-logo {{
-            width: clamp(92px, 20vw, 170px);
+            width: clamp(140px, 18vw, 180px);
             height: auto;
             display: block;
             border-radius: 8px;
@@ -183,7 +183,7 @@ def inject_global_styles() -> None:
         }}
 
         .lift-brand-title {{
-            font-size: clamp(1.2rem, 2.9vw, 2.15rem);
+            font-size: clamp(1.45rem, 3vw, 2.3rem);
             font-weight: 850;
             line-height: 1.08;
             color: {LIFT_COLORS['teal']};
@@ -228,7 +228,7 @@ def inject_global_styles() -> None:
 
         .lift-scroll-wrap {{
             text-align: center;
-            margin: 0.35rem 0 0.55rem 0;
+            margin: 0.2rem 0 0.45rem 0;
         }}
 
         .lift-scroll-button {{
@@ -248,6 +248,16 @@ def inject_global_styles() -> None:
             transform: translateY(-3px);
             filter: saturate(1.05);
             box-shadow: 0 18px 44px rgba(31, 122, 120, 0.32);
+        }}
+
+        .lift-hero-art-wrap {{
+            display: flex;
+            justify-content: flex-start;
+            margin: 0.35rem 0 0.55rem 0;
+        }}
+
+        .lift-hero-art-wrap [data-testid="stImage"] {{
+            width: min(220px, 58vw);
         }}
 
         .lift-section-title {{
@@ -374,13 +384,26 @@ def inject_global_styles() -> None:
 
         .stButton > button,
         [data-testid="stDownloadButton"] button {{
+            background: #FFFFFF !important;
+            color: {LIFT_COLORS['deep_teal']} !important;
+            border: 1px solid {LIFT_COLORS['border']} !important;
             border-radius: 8px !important;
+            box-shadow: 0 8px 22px rgba(36, 48, 47, 0.06) !important;
+            font-weight: 700 !important;
+        }}
+
+        .stButton > button:hover,
+        [data-testid="stDownloadButton"] button:hover {{
+            background: #C9574D !important;
+            color: #FFFFFF !important;
+            border-color: #C9574D !important;
         }}
 
         .stButton > button[kind="primary"],
         [data-testid="stDownloadButton"] button[kind="primary"] {{
             background: #C9574D !important;
             border-color: #C9574D !important;
+            color: #FFFFFF !important;
         }}
 
         h1, h2, h3 {{
@@ -403,17 +426,17 @@ def inject_global_styles() -> None:
         @media (max-width: 900px) {{
             .lift-brand-wrap {{
                 justify-content: flex-start;
-                align-items: center;
+                align-items: flex-start;
                 gap: 0.75rem;
-                padding: 0.45rem 0.55rem;
+                padding: 0.7rem 0.7rem;
             }}
 
             .lift-brand-logo {{
-                width: 92px;
+                width: 112px;
             }}
 
             .lift-brand-title {{
-                font-size: 1.05rem;
+                font-size: 1.18rem;
             }}
 
             .lift-brand-subtitle {{
@@ -423,6 +446,12 @@ def inject_global_styles() -> None:
             .block-container {{
                 padding-left: 0.85rem;
                 padding-right: 0.85rem;
+                padding-top: 3.25rem;
+            }}
+
+            .lift-hero-art-wrap {{
+                justify-content: center;
+                margin: 0.25rem 0 0.4rem 0;
             }}
 
             h1 {{

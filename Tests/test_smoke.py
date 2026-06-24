@@ -140,6 +140,14 @@ class LiftSmokeTests(unittest.TestCase):
         self.assertIn("http_status", result)
         self.assertEqual(result["confidence"], "low")
 
+    def test_dot_art_animation_is_in_main_flow_before_intake(self):
+        source = (ROOT / "app.py").read_text(encoding="utf-8-sig")
+        animation_call = source.index("ui.render_hover_animation(width_px=220")
+        intake_anchor = source.index('ui.render_anchor("lift-form-section")')
+        lower_expander = source.index('with st.expander("How LIFT Works"')
+        self.assertLess(animation_call, intake_anchor)
+        self.assertLess(animation_call, lower_expander)
+
 
 if __name__ == "__main__":
     unittest.main()

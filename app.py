@@ -3797,6 +3797,9 @@ def main():
         )
     ui.render_scroll_cta(target_anchor_id="lift-form-section", label="Start your LIFT plan")
     st.markdown("A guided plan for finding resource options, checking barriers, preparing outreach, and tracking next steps.")
+    st.markdown('<div class="lift-hero-art-wrap">', unsafe_allow_html=True)
+    ui.render_hover_animation(width_px=220, height_px=220, frame_delay_ms=1300)
+    st.markdown("</div>", unsafe_allow_html=True)
     ui.render_anchor("lift-form-section")
     render_generate_page()
 
