@@ -209,8 +209,9 @@ Click **Generate LIFT Plan**. The app will:
 
 1. **Structured Intent:** LIFT interprets the request into need type, search area, urgency, barriers/preferences, and missing information.
 2. **AI Routing Decision:** LLM selects the best route if an API key is available. Demo fallback is clearly labeled if no key is present.
-3. **Custom Tool Call:** Runs a model-callable or tool-like function to analyze resources and gaps.
-4. **Show Results:**
+3. **Model Tool Choice:** In live mode, the LLM receives the available tool schemas and chooses which tool calls are needed.
+4. **Tool Execution Loop:** The app reads the model's `tool_calls`, executes the requested function, returns the result as a tool message, and lets the model continue or stop.
+5. **Show Results:**
    - Agent Decision Trace (why the route was chosen)
    - Suggested resource cards/menu
    - Eligibility and access barriers
@@ -295,8 +296,26 @@ Every time you generate a plan, LIFT shows:
 
 ### Tool Use / MCP-Style Workflow
 
-- OpenAI tool-calling uses `analyze_resource_gaps_and_build_contingency_plan`.
+- OpenAI live mode exposes `analyze_resource_gaps_and_build_contingency_plan` and `mcp_basic_provider_check` through the API `tools` parameter.
+- The live workflow uses `tool_choice="auto"` so the model chooses whether to call the resource-gap tool, the provider-check tool, or both.
+- The app executes model-requested `tool_calls`, appends tool results back into the conversation, and lets the model continue or write the final report.
 - Provider checks use `mcp_basic_provider_check`, a safe public HTTP check that does not log in, submit forms, or bypass access controls.
+
+### Final Submission Checklist
+
+| Requirement | Evidence |
+| --- | --- |
+| Deployed app | `https://lift-agent.streamlit.app/` |
+| GitHub repository | `https://github.com/LindseyB1/LIFT_Agent` |
+| Prompt engineering | `Prompts/system_prompt.md`, `Prompts/router_prompt.md`, `Prompts/model_comparison_prompt.md`, and `API_PROMPT_LOG.md` |
+| System prompt | `Prompts/system_prompt.md` and the live system message in `run_live_llm_tool_workflow()` |
+| Grounding | OpenStreetMap/Nominatim public search data plus `Data/lift_curated_corpus.md` retrieval citations |
+| MCP/tool definition | `ANALYZE_RESOURCE_GAP_TOOL` and `MCP_BASIC_PROVIDER_CHECK_TOOL` in `app.py` include names, descriptions, and JSON schemas |
+| MCP/tool execution | `run_live_llm_tool_workflow()` reads model `tool_calls`, dispatches handlers, and returns tool messages |
+| Agentic behavior | Live mode uses LLM route selection and automatic tool choice; fallback mode is labeled as local fallback |
+| Build log and iteration | `BUILD_LOG.md` and `Evidence/AGENT_WORKFLOW_EVIDENCE.md` |
+| Evaluation | `Tests/test_smoke.py`, `Tests/eval_results.md`, and documented qualitative cases |
+| Limitations | README Known Limitations and Evidence limitations/future work sections |
 
 ### Evaluation
 
@@ -539,7 +558,7 @@ If no `OPENAI_API_KEY`, the app runs in **Demo Mode**. Demo Mode still attempts 
 
 ## License
 
-This project is provided as-is for educational purposes. Synthetic data is for demonstration only.
+This project is provided as-is for educational purposes. Public search results require direct provider verification; labeled fallback rows are for demonstration only.
 
 ---
 
@@ -560,5 +579,5 @@ When LIFT generates a plan, it selects one of these routes:
 
 ---
 
-**Last Updated:** June 14, 2026  
-**Version:** 1.0 (Project 3 Draft)
+**Last Updated:** June 26, 2026
+**Version:** 1.0 (Project 3 Final)

@@ -97,6 +97,21 @@ Current implementation:
 - OpenAI integration is live when `OPENAI_API_KEY` is configured.
 - Demo fallback is deterministic and labeled as a baseline, not a second provider.
 
+## Iteration 7: Final Agentic Compliance Review
+
+Issues addressed:
+- The live OpenAI workflow exposed tools but forced the main resource-gap tool through `tool_choice`, which made the agentic decision evidence weaker than the rubric expects.
+- The README did not give one compact final-submission map from rubric requirement to project evidence.
+
+Changed:
+- Updated `run_live_llm_tool_workflow()` to expose both tool schemas with `tool_choice="auto"`.
+- Added a short tool-call loop that executes model-requested `tool_calls`, returns tool messages, and lets the model either call another tool or finish.
+- Added `tools_requested_by_model` to the runtime tool trace so the app can show which tools the model chose.
+- Added a final submission checklist in `README.md`.
+
+Decision:
+Keep deterministic local fallback for no-key environments, but label it honestly. Live agentic evidence depends on `OPENAI_API_KEY` being configured so the LLM can choose tools.
+
 Planned comparison:
 - Use `Prompts/model_comparison_prompt.md` to run the same task through OpenAI and a second provider when credentials are available.
 - Record scores in `Tests/eval_results.md`.

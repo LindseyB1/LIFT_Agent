@@ -28,6 +28,15 @@ Ran 5 tests in 2.699s
 OK
 ```
 
+Latest output after final agentic-compliance review:
+```text
+......
+----------------------------------------------------------------------
+Ran 6 tests in 7.287s
+
+OK
+```
+
 Coverage:
 - Imports core modules.
 - Confirms the local curated corpus retrieval returns citation IDs.
@@ -35,6 +44,7 @@ Coverage:
 - Confirms a short request like `find me a food pantry` is interpreted as `Food / Basic Needs` in fallback mode.
 - Confirms the session case record includes selected resources, follow-up actions, and session-only storage labeling.
 - Confirms provider website checks expose a visible status shape including `http_status`.
+- Confirms the dot-art animation remains in the main flow before intake.
 
 Command:
 `python -m pytest Tests/test_smoke.py -v`

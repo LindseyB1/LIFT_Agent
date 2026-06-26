@@ -21,6 +21,18 @@ Observe -> Reason -> Act -> Log
 
 The app does not place phone calls. Phone calls remain a manual user action; LIFT prepares the call plan, call script, checklist, and tracker row.
 
+## Live LLM Tool-Calling Loop
+
+When `OPENAI_API_KEY` is configured, `run_live_llm_tool_workflow()` uses a model-driven tool loop:
+
+1. The app sends the user context, route trace, external data trace, and available tool schemas to the model.
+2. The model chooses tool calls with `tool_choice="auto"`.
+3. The app reads the returned `tool_calls` and dispatches only the requested handler functions.
+4. Tool results are returned to the model as tool messages.
+5. The model may request another tool or stop and write the final grounded report.
+
+This is the main evidence for agentic behavior. The local no-key path remains a labeled fallback workflow for demo stability and does not replace the live LLM tool-choice evidence.
+
 ## Current Tool-Style Functions
 
 - `search_public_resources()` searches public provider/resource information and labels fallback data when external search is unavailable.
@@ -398,7 +410,7 @@ Uses **real public HTTP requests** when a provider URL is available:
 
 ### 1. Consent Section
 **Required before generating:**
-- Synthetic data acknowledgment
+- Public external data or labeled fallback data acknowledgment
 - No sensitive information agreement
 - Human-supervised automation confirmation
 - Human approval requirement
@@ -459,7 +471,7 @@ st.session_state["case_history"]  # User-saved case records for the current sess
 ### ✅ App imports and core workflow tests pass locally
 - Tested: Yes
 - Direct test command: `$env:PYTHONDONTWRITEBYTECODE='1'; python Tests\test_smoke.py`
-- Result: PASS, 3 tests
+- Result: PASS, 6 tests
 - Demo mode core tool workflow works without API key: Yes
 
 ### ✅ App works even if no API key is present

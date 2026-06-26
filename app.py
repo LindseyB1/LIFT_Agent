@@ -2082,7 +2082,10 @@ def run_live_llm_tool_workflow(
             "role": "system",
             "content": (
                 "You are LIFT Agent, an AI-assisted resource matching, gap review, outreach drafting, "
-                "and follow-up tracking assistant. You must call the custom tool before writing the final response."
+                "and follow-up tracking assistant. Decide which available tool or tools are needed before writing "
+                "the final response. You must ground the final plan in tool results. Use the resource-gap tool for "
+                "matching, barriers, contingencies, outreach, and tracker rows. Use the MCP provider-check tool only "
+                "when a provider URL needs a basic public website check."
             ),
         },
         {
@@ -2104,72 +2107,90 @@ def run_live_llm_tool_workflow(
         },
     ]
 
-    first_response = client.chat.completions.create(
-        model=DEFAULT_MODEL,
-        messages=messages,
-        tools=[ANALYZE_RESOURCE_GAP_TOOL, MCP_BASIC_PROVIDER_CHECK_TOOL],
-        tool_choice={
-            "type": "function",
-            "function": {"name": "analyze_resource_gaps_and_build_contingency_plan"},
-        },
-        temperature=0.2,
-    )
-
-    first_message = first_response.choices[0].message
-    tool_calls = first_message.tool_calls or []
-
-    if not tool_calls:
-        raise RuntimeError("The model did not request the custom tool.")
-
-    messages.append(first_message.model_dump(exclude_none=True))
-
     tool_result = None
+    requested_tools = []
+    final_text = ""
+    max_tool_rounds = 3
 
-    for tool_call in tool_calls:
-        # Support both the main analysis tool and the MCP provider check tool
-        if tool_call.function.name == "analyze_resource_gaps_and_build_contingency_plan":
-            arguments = parse_json_safely(tool_call.function.arguments)
+    for round_index in range(max_tool_rounds):
+        response = client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=messages,
+            tools=[ANALYZE_RESOURCE_GAP_TOOL, MCP_BASIC_PROVIDER_CHECK_TOOL],
+            tool_choice="auto",
+            temperature=0.2,
+        )
 
-            tool_result = analyze_resource_gaps_and_build_contingency_plan(
-                user_need=arguments.get("user_need", user_need),
-                resource_category=arguments.get("resource_category", resource_category),
-                primary_location=arguments.get("primary_location", primary_location),
-                additional_locations=arguments.get("additional_locations", additional_locations),
-                radius_miles=arguments.get("radius_miles", radius_miles),
-                context=arguments.get("context", context),
-                selected_outputs=arguments.get("selected_outputs", selected_outputs),
-                resource_data=resource_data,
-            )
+        response_message = response.choices[0].message
+        tool_calls = response_message.tool_calls or []
+        messages.append(response_message.model_dump(exclude_none=True))
 
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(tool_result, indent=2),
-                }
-            )
+        if not tool_calls:
+            final_text = response_message.content or ""
+            break
 
-        elif tool_call.function.name == "mcp_basic_provider_check":
-            arguments = parse_json_safely(tool_call.function.arguments)
+        for tool_call in tool_calls:
+            requested_tools.append(tool_call.function.name)
 
-            mcp_result = mcp_basic_provider_check(
-                provider_name=arguments.get("provider_name", ""),
-                website_url=arguments.get("website_url", ""),
-                category=arguments.get("category"),
-                location=arguments.get("location"),
-                user_need=arguments.get("user_need"),
-            )
+            if tool_call.function.name == "analyze_resource_gaps_and_build_contingency_plan":
+                arguments = parse_json_safely(tool_call.function.arguments)
 
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(mcp_result, indent=2),
-                }
-            )
+                tool_result = analyze_resource_gaps_and_build_contingency_plan(
+                    user_need=arguments.get("user_need", user_need),
+                    resource_category=arguments.get("resource_category", resource_category),
+                    primary_location=arguments.get("primary_location", primary_location),
+                    additional_locations=arguments.get("additional_locations", additional_locations),
+                    radius_miles=arguments.get("radius_miles", radius_miles),
+                    context=arguments.get("context", context),
+                    selected_outputs=arguments.get("selected_outputs", selected_outputs),
+                    resource_data=resource_data,
+                )
 
-        else:
-            raise RuntimeError(f"Unexpected tool requested: {tool_call.function.name}")
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(tool_result, indent=2),
+                    }
+                )
+
+            elif tool_call.function.name == "mcp_basic_provider_check":
+                arguments = parse_json_safely(tool_call.function.arguments)
+
+                mcp_result = mcp_basic_provider_check(
+                    provider_name=arguments.get("provider_name", ""),
+                    website_url=arguments.get("website_url", ""),
+                    category=arguments.get("category"),
+                    location=arguments.get("location"),
+                    user_need=arguments.get("user_need"),
+                )
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(mcp_result, indent=2),
+                    }
+                )
+
+            else:
+                raise RuntimeError(f"Unexpected tool requested: {tool_call.function.name}")
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Review the returned tool results. If another tool call is needed, request it now. "
+                    "If the plan is sufficiently grounded, write the final structured LIFT report."
+                ),
+            }
+        )
+
+    if not requested_tools:
+        raise RuntimeError("The model did not request any LIFT tool.")
+
+    if tool_result is None:
+        raise RuntimeError("The model did not request the resource-gap analysis tool.")
 
     final_instruction = f"""
 Write a concise structured report using the tool result.
@@ -2196,12 +2217,13 @@ Use these local curated-corpus citations when they support the recommendation: {
         temperature=0.3,
     )
 
-    final_text = final_response.choices[0].message.content or ""
+    final_text = final_response.choices[0].message.content or final_text
 
     tool_trace = {
         "tool_requested_by_model": True,
-        "tool_name": "analyze_resource_gaps_and_build_contingency_plan",
-        "tool_mode": "OpenAI model-callable function tool",
+        "tool_name": requested_tools[-1],
+        "tools_requested_by_model": requested_tools,
+        "tool_mode": "OpenAI model-callable function tools with auto tool_choice",
         "external_data_source": data_source_trace,
         "tool_result_keys": list(tool_result.keys()) if tool_result else [],
         "retrieval_trace": context.get("retrieval_trace", {}),
